@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 import torch
 import torch.nn as nn
 
-from lingua.distributed import get_is_master
+from lingua.distributed import dist_mean, get_is_master
 import wandb
 
 logger = logging.getLogger()
@@ -180,6 +180,39 @@ class GPUMemoryMonitor:
             f"{mem_stats.max_reserved_gib} GiB peak, {mem_stats.max_reserved_pct}% peak"
         )
         return f"{display_str}"
+
+
+class SparsityMonitor:
+    def __init__(self, model: nn.Module, group_plot_limit: int = 10):
+        self.data_ptr_to_name = {
+            p.data_ptr(): name for name, p in model.named_parameters()
+        }
+        self.group_plot_limit = group_plot_limit
+
+    def get_stats(self, optimizer):
+        if not hasattr(optimizer, "regularized_param_groups"):
+            return
+
+        from pat.utils import instantiate_module
+
+        tag_dict = {}
+        for i, group in enumerate(optimizer.regularized_param_groups()):
+            is_svd = group["group_type"] == "SVDGrouper"
+            for j, p in enumerate(group["params"]):
+                if j == self.group_plot_limit:
+                    break
+
+                name = self.data_ptr_to_name[p.data_ptr()]
+                if is_svd:
+                    sv_count = optimizer.state[p]["sv_count"]
+                    sparsity_frac = 1.0 - (sv_count / min(p.shape))
+                else:
+                    sparsity_frac = 1.0 - (torch.count_nonzero(p) / p.numel())
+
+                sparsity_frac = dist_mean(sparsity_frac).item()
+                if sparsity_frac > 0:
+                    tag_dict.setdefault(f"reg_group_{i}", {})[name] = sparsity_frac
+        return tag_dict
 
 
 def upload_train_to_wandb(

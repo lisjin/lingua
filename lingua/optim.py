@@ -5,8 +5,12 @@ from functools import partial
 import math
 
 import logging
+import yaml
 from torch import nn
 from torch.optim import AdamW, lr_scheduler
+
+from pat.optim import PruneOptimizer
+from pat.utils import get_param_groups
 
 logger = logging.getLogger()
 
@@ -27,8 +31,11 @@ class OptimArgs:
     cosine_theta: float = 1.0
     annealing_step: int = 1000
     decay_fraction: float = 0.1
-
     exp_factor: float = 0.5
+
+    prune_config: str = ""
+    prune_warmup_steps: int = 0
+    prune_reg_lambda: float = 0.0
 
 
 def lr_linear(step: int, warmup: int, n_steps: int, min_ratio: float) -> float:
@@ -58,7 +65,7 @@ def lr_cosine(
     theta: float,
     min_ratio: float,
 ) -> float:
-    sign = ((step // (n_steps*cycle_length)) % 2) * -2 + 1
+    sign = ((step // (n_steps * cycle_length)) % 2) * -2 + 1
     if step < warmup:
         lr = float(step) / warmup
     elif step <= n_steps:
@@ -69,6 +76,7 @@ def lr_cosine(
     else:
         lr = min_ratio
     return lr
+
 
 def lr_wsd(
     step: int,
@@ -88,7 +96,7 @@ def lr_wsd(
     if step == n_steps:
         cycle_num -= 1
         curr_n_steps = n_steps
-    
+
     if step < warmup:
         lr = float(step) / warmup
     elif step <= curr_n_steps - decay_length:
@@ -100,8 +108,8 @@ def lr_wsd(
         # lr = slope * step + intercept
 
         step_in_decay = step - (curr_n_steps - decay_length)
-        progress = step_in_decay / decay_length  
-        lr = 1 / (progress * (1/min_ratio) + (1 - progress))
+        progress = step_in_decay / decay_length
+        lr = 1 / (progress * (1 / min_ratio) + (1 - progress))
     else:
         lr = min_ratio
 
@@ -148,14 +156,31 @@ def build_lr_fn(args: OptimArgs, n_steps: int):
 
 def build_optimizer(model: nn.Module, args: OptimArgs, n_steps: int):
     logger.info("Starting build of optimizer...")
+
+    if args.prune_config:
+        with open(args.prune_config, "r") as f:
+            prune_config = yaml.load(f, Loader=yaml.CLoader)
+
+        param_groups = get_param_groups(model, prune_config)
+        assert len(param_groups) > 1
+    else:
+        param_groups = model.parameters()
+
     optimizer = AdamW(
-        model.parameters(),
+        param_groups,
         lr=args.lr,
         betas=(args.beta1, args.beta2),
         weight_decay=args.weight_decay,
         eps=args.epsilon,
         fused=True,  # Faster optim.step but can throw errors
     )
+
+    if args.prune_config:
+        optimizer = PruneOptimizer(
+            optimizer,
+            reg_lambda=args.prune_reg_lambda,
+            warmup_steps=args.prune_warmup_steps,
+        )
 
     # scheduler
     lr_fn = build_lr_fn(args, n_steps)

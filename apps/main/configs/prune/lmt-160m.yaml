@@ -1,0 +1,3 @@
+tok_embeddings.weight:
+  group_type: SVDGrouper
+  prox_type: ProxNuclearNorm

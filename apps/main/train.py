@@ -6,18 +6,15 @@ import gc
 import logging
 import os
 import sys
-import time
 from contextlib import ExitStack
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from timeit import default_timer as timer
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
-import numpy as np
 from omegaconf import OmegaConf
 import torch
 import torch.distributed
-import torch.nn.functional as F
 import xformers.profiler
 from torch.optim import lr_scheduler
 from torch.distributed.checkpoint.stateful import Stateful
@@ -51,6 +48,7 @@ from lingua.metrics import (
     GPUMemoryMonitor,
     LoggingArgs,
     MetricLogger,
+    SparsityMonitor,
     get_num_params,
 )
 from lingua.optim import OptimArgs, build_optimizer
@@ -137,7 +135,9 @@ def validate_train_args(args: TrainArgs, output_size: int):
     assert args.dump_dir, "Dump dir not set"
 
     if args.checkpoint.path is None:
-        logger.info(f"Setting checkpoint path to {str(Path(args.dump_dir) / 'checkpoints')}")
+        logger.info(
+            f"Setting checkpoint path to {str(Path(args.dump_dir) / 'checkpoints')}"
+        )
         args.checkpoint.path = str(Path(args.dump_dir) / "checkpoints")
 
     for source in args.data.sources:
@@ -219,6 +219,7 @@ def every_n_steps(train_state, freq, acc_step=None, acc_freq=None):
 
 
 def train(args: TrainArgs):
+    saved = False
     with ExitStack() as context_stack:
         tokenizer = build_tokenizer(args.data.tokenizer.name, args.data.tokenizer.path)
         validate_train_args(
@@ -241,7 +242,10 @@ def train(args: TrainArgs):
         dp_degree = dp_mesh.size()
         dp_rank = dp_mesh.get_local_rank()
         if args.distributed.dp_shard > 1:
-            dp_rank = dp_rank * world_mesh["dp_shard"].size() + world_mesh["dp_shard"].get_local_rank()
+            dp_rank = (
+                dp_rank * world_mesh["dp_shard"].size()
+                + world_mesh["dp_shard"].get_local_rank()
+            )
             dp_degree *= world_mesh["dp_shard"].size()
 
         logger.info(f"Running on dp rank : {dp_rank}")
@@ -276,8 +280,10 @@ def train(args: TrainArgs):
 
         if args.checkpoint.init_ckpt_path:
             logger.info(f"Loading initial model from {args.checkpoint.init_ckpt_path}")
-            load_from_checkpoint(args.checkpoint.init_ckpt_path, model, model_key="model") # Put model_key="" if its directly the model checkpoint
-            model.rope_embeddings.reset_parameters() # For RoPe initialization since it's a buffer it might not be loaded
+            load_from_checkpoint(
+                args.checkpoint.init_ckpt_path, model, model_key="model"
+            )  # Put model_key="" if its directly the model checkpoint
+            model.rope_embeddings.reset_parameters()  # For RoPe initialization since it's a buffer it might not be loaded
         else:
             with torch.random.fork_rng(devices=[torch.cuda.current_device()]):
                 torch.manual_seed(args.model.seed)
@@ -299,6 +305,12 @@ def train(args: TrainArgs):
         optimizer, scheduler = build_optimizer(model, args.optim, args.steps)
         data_loader_state = init_dataloader_state_from_args(
             args.data, dp_rank, dp_degree
+        )
+
+        sparsity_monitor = (
+            SparsityMonitor(model)
+            if hasattr(optimizer, "regularized_param_groups")
+            else None
         )
 
         train_state = TrainState(
@@ -433,7 +445,9 @@ def train(args: TrainArgs):
                 )
 
                 grad_norm = (
-                    grad_norm.full_tensor() if isinstance(grad_norm, DTensor) else grad_norm
+                    grad_norm.full_tensor()
+                    if isinstance(grad_norm, DTensor)
+                    else grad_norm
                 ).item()
 
                 optimizer.step()
@@ -484,25 +498,25 @@ def train(args: TrainArgs):
                     )
                     * wps
                 )
-                metrics = flatten_dict(
-                    {
-                        "global_step": train_state.step,
-                        "acc_step": train_state.acc_step,
-                        "speed": {
-                            "wps": wps,
-                            "FLOPS": FLOPS,
-                            "curr_iter_time": curr_iter_time,
-                            "data_load_time": data_load_time,
-                        },
-                        "optim": {
-                            "grad_norm": grad_norm,
-                            "lr": curr_lr,
-                            "total_tokens": total_tokens,
-                        },
-                        "memory": gpu_mem_stats._asdict(),
+                metrics_dict = {
+                    "global_step": train_state.step,
+                    "acc_step": train_state.acc_step,
+                    "speed": {
+                        "wps": wps,
+                        "FLOPS": FLOPS,
+                        "curr_iter_time": curr_iter_time,
+                        "data_load_time": data_load_time,
                     },
-                    sep="/",
-                )
+                    "optim": {
+                        "grad_norm": grad_norm,
+                        "lr": curr_lr,
+                        "total_tokens": total_tokens,
+                    },
+                    "memory": gpu_mem_stats._asdict(),
+                }
+                if sparsity_monitor is not None:
+                    metrics_dict["sparsity"] = sparsity_monitor.get_stats(optimizer)
+                metrics = flatten_dict(metrics_dict, sep="/")
 
                 to_sync = {}
                 to_sync["loss/out"] = loss.item()
