@@ -1,9 +1,12 @@
-name: lmt-160m
-dump_dir: /home/lvj/local/checkpoints/lmt-160m
+name: lmt-280m
+dump_dir: /home/lvj/local/checkpoints/lmt-280m
 steps: 120_000
 probe_freq: null
 grad_acc_steps: 2
 seed: 777
+
+env:
+  NCCL_DEBUG: WARN
 
 optim:
   lr: 3e-4
@@ -58,7 +61,7 @@ checkpoint:
 logging:
   freq: 1
   wandb:
-    name: lmt-160m
+    name: lmt-280m
     project: lingua
 
 eval:

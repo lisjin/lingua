@@ -11,7 +11,6 @@ from tqdm import tqdm
 
 from omegaconf import OmegaConf
 from torch.nn import functional as F
-import xformers
 
 from apps.main.transformer import LMTransformer, LMTransformerArgs
 from lingua.args import dataclass_from_dict
@@ -404,6 +403,7 @@ def load_consolidated_model_and_tokenizer(
     consolidated_path,
     model_cls=LMTransformer,
     model_args_cls=LMTransformerArgs,
+    pat_cfg=None,
 ):
     ckpt_path = Path(consolidated_path)
     config = ckpt_path / "params.json"
@@ -417,6 +417,14 @@ def load_consolidated_model_and_tokenizer(
     model = model_cls(model_args)
     st_dict = torch.load(ckpt_path / CONSOLIDATE_NAME, weights_only=True)
     model.load_state_dict(st_dict["model"])
+    if pat_cfg is not None and pat_cfg.insert_svd_modules:
+        from lingua.optim import build_optimizer
+        from pat.utils import insert_svd_modules_
+
+        optimizer, _ = build_optimizer(model, config.optim, config.steps)
+        optimizer.load_state_dict(st_dict["optim"])
+        insert_svd_modules_(model, optimizer)
+
     model = model.cuda().eval()
     for param in model.parameters():
         param.data = param.data.to(dtype=param_dtype)

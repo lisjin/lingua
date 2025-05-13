@@ -12,7 +12,8 @@ from datetime import datetime, timezone
 import torch
 import torch.nn as nn
 
-from lingua.distributed import dist_mean, get_is_master
+from lingua.distributed import get_is_master
+from pat.utils import is_dtensor
 import wandb
 
 logger = logging.getLogger()
@@ -207,9 +208,14 @@ class SparsityMonitor:
                     sv_count = optimizer.state[p]["sv_count"]
                     sparsity_frac = 1.0 - (sv_count / min(p.shape))
                 else:
-                    sparsity_frac = 1.0 - (torch.count_nonzero(p) / p.numel())
+                    nz_count = (
+                        (p != 0).to(torch.uint8).sum()
+                        if is_dtensor(p)
+                        else p.count_nonzero()
+                    )
+                    sparsity_frac = 1.0 - (nz_count / p.numel())
 
-                sparsity_frac = dist_mean(sparsity_frac).item()
+                sparsity_frac = sparsity_frac.item()
                 if sparsity_frac > 0:
                     tag_dict.setdefault(f"reg_group_{i}", {})[name] = sparsity_frac
         return tag_dict

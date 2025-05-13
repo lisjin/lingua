@@ -11,6 +11,9 @@ optim:
     lr_min_ratio: 0.000001
     clip: 10.0
 
+env:
+    NCCL_DEBUG: WARN
+
 distributed:
     fsdp_type: full_shard
     compile: true

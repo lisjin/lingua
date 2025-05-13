@@ -5,7 +5,6 @@ from functools import partial
 import math
 
 import logging
-import yaml
 from torch import nn
 from torch.optim import AdamW, lr_scheduler
 
@@ -158,11 +157,8 @@ def build_optimizer(model: nn.Module, args: OptimArgs, n_steps: int):
     logger.info("Starting build of optimizer...")
 
     if args.prune_config:
-        with open(args.prune_config, "r") as f:
-            prune_config = yaml.load(f, Loader=yaml.CLoader)
-
-        param_groups = get_param_groups(model, prune_config)
-        assert len(param_groups) > 1
+        param_groups = get_param_groups(model, args.prune_config)
+        logger.info(f"Found {len(param_groups)} param groups from prune_config")
     else:
         param_groups = model.parameters()
 
