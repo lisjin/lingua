@@ -6,15 +6,18 @@ import gc
 import logging
 import os
 import sys
+import time
 from contextlib import ExitStack
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from timeit import default_timer as timer
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
+import numpy as np
 from omegaconf import OmegaConf
 import torch
 import torch.distributed
+import torch.nn.functional as F
 import xformers.profiler
 from torch.optim import lr_scheduler
 from torch.distributed.checkpoint.stateful import Stateful
@@ -22,7 +25,7 @@ from torch.distributed._tensor import DTensor
 
 from lingua.args import dataclass_from_dict, dump_config, flatten_dict
 from lingua.checkpoint import CheckpointArgs, CheckpointManager, load_from_checkpoint
-from lingua.data import (
+from apps.aunet.data.data import (
     DataArgs,
     PackTokensState,
     build_dataloader_from_args,
@@ -48,18 +51,15 @@ from lingua.metrics import (
     GPUMemoryMonitor,
     LoggingArgs,
     MetricLogger,
-    SparsityMonitor,
     get_num_params,
 )
 from lingua.optim import OptimArgs, build_optimizer
 from lingua.profiling import ProfilerArgs, maybe_run_profiler
 from lingua.tokenizer import build_tokenizer
-from apps.main.transformer import (
-    LMTransformerArgs,
-    LMTransformer,
-    get_num_flop_per_token,
+from apps.aunet.hierarchical import (
+    HierarchicalArgs,
+    HierarchicalTransformer,
     build_fsdp_grouping_plan,
-    tp_parallelize,
     get_no_recompute_ops,
 )
 from lingua.probe import AutoProbeD
@@ -89,7 +89,7 @@ class TrainArgs:
 
     data: DataArgs = field(default_factory=DataArgs)
     optim: OptimArgs = field(default_factory=OptimArgs)
-    model: LMTransformerArgs = field(default_factory=LMTransformerArgs)
+    model: HierarchicalArgs = field(default_factory=HierarchicalArgs)
     distributed: DistributedArgs = field(default_factory=DistributedArgs)
     env: EnvironmentArgs = field(default_factory=EnvironmentArgs)
 
@@ -135,9 +135,7 @@ def validate_train_args(args: TrainArgs, output_size: int):
     assert args.dump_dir, "Dump dir not set"
 
     if args.checkpoint.path is None:
-        logger.info(
-            f"Setting checkpoint path to {str(Path(args.dump_dir) / 'checkpoints')}"
-        )
+        logger.info(f"Setting checkpoint path to {str(Path(args.dump_dir) / 'checkpoints')}")
         args.checkpoint.path = str(Path(args.dump_dir) / "checkpoints")
 
     for source in args.data.sources:
@@ -174,9 +172,10 @@ def validate_train_args(args: TrainArgs, output_size: int):
                 and args.distributed.dp_replicate == get_world_size()
             )
 
-    args.model.max_seqlen = args.data.seq_len
+    if args.model.max_seqlens[0] < 0:
+        args.model.max_seqlens[0] = args.data.seq_len
 
-    if args.distributed.tp_size == 1:
+    if args.distributed.tp_size > 1:
         logger.warning(
             "Tensor parallelism has not been tested for a while, use at your own risk"
         )
@@ -218,8 +217,11 @@ def every_n_steps(train_state, freq, acc_step=None, acc_freq=None):
     return test
 
 
+def format_list(l):
+    return ", ".join(f"{round(e, 4):>7}" for e in l)
+
+
 def train(args: TrainArgs):
-    saved = False
     with ExitStack() as context_stack:
         tokenizer = build_tokenizer(args.data.tokenizer.name, args.data.tokenizer.path)
         validate_train_args(
@@ -242,10 +244,7 @@ def train(args: TrainArgs):
         dp_degree = dp_mesh.size()
         dp_rank = dp_mesh.get_local_rank()
         if args.distributed.dp_shard > 1:
-            dp_rank = (
-                dp_rank * world_mesh["dp_shard"].size()
-                + world_mesh["dp_shard"].get_local_rank()
-            )
+            dp_rank = dp_rank * world_mesh["dp_shard"].size() + world_mesh["dp_shard"].get_local_rank()
             dp_degree *= world_mesh["dp_shard"].size()
 
         logger.info(f"Running on dp rank : {dp_rank}")
@@ -256,7 +255,7 @@ def train(args: TrainArgs):
 
         # Initializing Model in meta device allows us to initialize models much bigger than 1 gpu's memory
         with torch.device("meta"):
-            model = LMTransformer(args.model)
+            model = HierarchicalTransformer(args.model)
         logger.info("Model is built !")
 
         model_param_count = get_num_params(model)
@@ -267,7 +266,7 @@ def train(args: TrainArgs):
             args.model,
             args.distributed,
             fsdp_grouping_plan=build_fsdp_grouping_plan(args.model),
-            tp_parallelize=tp_parallelize,
+            tp_parallelize=None,
             no_recompute_ops=get_no_recompute_ops(),
         )
 
@@ -280,10 +279,8 @@ def train(args: TrainArgs):
 
         if args.checkpoint.init_ckpt_path:
             logger.info(f"Loading initial model from {args.checkpoint.init_ckpt_path}")
-            load_from_checkpoint(
-                args.checkpoint.init_ckpt_path, model, model_key="model"
-            )  # Put model_key="" if its directly the model checkpoint
-            model.rope_embeddings.reset_parameters()  # For RoPe initialization since it's a buffer it might not be loaded
+            load_from_checkpoint(args.checkpoint.init_ckpt_path, model, model_key="model") # Put model_key="" if its directly the model checkpoint
+            model.rope_embeddings.reset_parameters() # For RoPe initialization since it's a buffer it might not be loaded
         else:
             with torch.random.fork_rng(devices=[torch.cuda.current_device()]):
                 torch.manual_seed(args.model.seed)
@@ -307,12 +304,6 @@ def train(args: TrainArgs):
             args.data, dp_rank, dp_degree
         )
 
-        sparsity_monitor = (
-            SparsityMonitor(model)
-            if hasattr(optimizer, "regularized_param_groups")
-            else None
-        )
-
         train_state = TrainState(
             step=0,
             acc_step=0,
@@ -322,6 +313,7 @@ def train(args: TrainArgs):
 
         checkpoint = CheckpointManager.instantiate_and_make_dir(args.checkpoint)
         checkpoint.load(model, optimizer, train_state, world_mesh)
+        train_state.data_loader_state['regex'] = args.data.regex # Might be better to move this not in Prefetch state but in plain args in some function of build dataloader
         # Either load from latest checkpoint or start from scratch
         if args.probe_freq is not None:
             if get_is_master():
@@ -364,9 +356,14 @@ def train(args: TrainArgs):
             # get batch
             curr_lr = float(optimizer.param_groups[0]["lr"])
             data_load_start = timer()
-            batch, train_state.data_loader_state = next(data_loader)
+            
+            batch, batch_level_mask, train_state.data_loader_state = next(data_loader)
             batch = torch.tensor(
                 batch,
+                dtype=torch.long,
+            )
+            batch_level_mask = torch.tensor(
+                batch_level_mask,
                 dtype=torch.long,
             )
 
@@ -378,6 +375,9 @@ def train(args: TrainArgs):
 
             input_ids = batch[:, :, 0].cuda()
             labels = batch[:, :, 1].cuda()
+            level_mask = batch_level_mask[:, :, 0].cuda()
+            labels_level_mask = batch_level_mask[:, :, 1].cuda()
+            
             data_load_time = round(timer() - data_load_start, 4)
             nwords_since_last_log += input_ids.numel()
 
@@ -412,19 +412,28 @@ def train(args: TrainArgs):
                     # So we divide bsz by 2 or seqlen by 2
                     probe_bsz = max(1, bsz // 2)
                     probe_seq = seqlen if (bsz // 2 >= 1) else (seqlen // 2)
-                    probe_loss = model(
+                    probe_loss, mask_loss, _ = model(
                         input_ids[:probe_bsz, :probe_seq],
+                        level_mask[:probe_bsz, :probe_seq],
                         labels[:probe_bsz, :probe_seq],
+                        labels_level_mask[:probe_bsz, :probe_seq],
                     )
-                    probe_loss.backward()
+                    if mask_loss is not None:
+                        (probe_loss + args.model.lambda_level*mask_loss).backward()
+                    else:
+                        probe_loss.backward()
                     # We zero grads to cancel this fake step
                     optimizer.zero_grad()
 
                 assert (
                     next(model.parameters()).grad is None
                 ), "Probe model shouldn't have grads at this point"
+            
+            ce_loss, mask_loss, nb_toks = model(input_ids, level_mask, labels, labels_level_mask)
 
-            loss = model(input_ids, labels)
+            loss = ce_loss
+            if mask_loss is not None:
+                loss += args.model.lambda_level * mask_loss
 
             if args.grad_acc_steps > 1:
                 model.set_requires_gradient_sync(train_state.acc_step == 0)
@@ -445,9 +454,7 @@ def train(args: TrainArgs):
                 )
 
                 grad_norm = (
-                    grad_norm.full_tensor()
-                    if isinstance(grad_norm, DTensor)
-                    else grad_norm
+                    grad_norm.full_tensor() if isinstance(grad_norm, DTensor) else grad_norm
                 ).item()
 
                 optimizer.step()
@@ -489,37 +496,37 @@ def train(args: TrainArgs):
                 # This is an estimate and the correct values may change
                 # if you change the architecture
                 # Use xformer's analyze profile trace to get actual measurement
-                FLOPS = (
-                    get_num_flop_per_token(
-                        model_param_count - args.model.vocab_size * args.model.dim,
-                        args.model.n_layers,
-                        args.model.dim,
-                        args.data.seq_len,
-                    )
-                    * wps
+                FLOPS = wps * model.flops_per_token()
+                metrics = flatten_dict(
+                    {
+                        "global_step": train_state.step,
+                        "acc_step": train_state.acc_step,
+                        "speed": {
+                            "wps": wps,
+                            "FLOPS": FLOPS,
+                            "curr_iter_time": curr_iter_time,
+                            "data_load_time": data_load_time,
+                        },
+                        "optim": {
+                            "grad_norm": grad_norm,
+                            "lr": curr_lr,
+                            "total_tokens": total_tokens,
+                        },
+                        "memory": gpu_mem_stats._asdict(),
+                    },
+                    sep="/",
                 )
-                metrics_dict = {
-                    "global_step": train_state.step,
-                    "acc_step": train_state.acc_step,
-                    "speed": {
-                        "wps": wps,
-                        "FLOPS": FLOPS,
-                        "curr_iter_time": curr_iter_time,
-                        "data_load_time": data_load_time,
-                    },
-                    "optim": {
-                        "grad_norm": grad_norm,
-                        "lr": curr_lr,
-                        "total_tokens": total_tokens,
-                    },
-                    "memory": gpu_mem_stats._asdict(),
-                }
-                if sparsity_monitor is not None:
-                    metrics_dict["sparsity"] = sparsity_monitor.get_stats(optimizer)
-                metrics = flatten_dict(metrics_dict, sep="/")
 
                 to_sync = {}
-                to_sync["loss/out"] = loss.item()
+                to_sync[f"loss/out"] = loss.item()
+                to_sync[f"ce/out"] = ce_loss.item()
+                if mask_loss is not None:
+                    to_sync[f"mask_loss/out"] = mask_loss.item()
+
+                for i in range(len(nb_toks)):
+                    nb_toks[i] = nb_toks[i].item()
+                    metrics[f"nb_toks/enc_{i}"] = nb_toks[i]
+
                 metrics.update(dist_mean_dict(to_sync))
 
                 if get_is_master():
@@ -532,6 +539,7 @@ def train(args: TrainArgs):
                     f"step: {train_state.step}"
                     f"  acc: {train_state.acc_step}"
                     f"  loss: {round(loss.item(),4):>7}"
+                    f"  nbtoks: {format_list(nb_toks)}"
                     f"  grad: {grad_norm:.2e}"
                     f"  flops: {FLOPS:.2e}"
                     f"  wps: {wps:.2e}"
@@ -557,7 +565,7 @@ def train(args: TrainArgs):
             if args.eval is not None and (every_n_steps(
                 train_state, args.checkpoint.eval.every, acc_step=0
             ) or every_n_steps(train_state, args.steps, acc_step=0)):
-                from apps.main.eval import (
+                from apps.aunet.eval import (
                     launch_eval,
                     EVAL_FOLDER_NAME,
                     EvalArgs,
@@ -586,7 +594,7 @@ def train(args: TrainArgs):
                         launch_job(
                             StoolArgs(
                                 asdict(eval_args),
-                                script="apps.main.eval",
+                                script="apps.aunet.eval",
                                 copy_code=False,
                                 nodes=args.async_eval_gpus // 8,
                                 qos="lowest",
@@ -625,10 +633,10 @@ def main():
     @dataclass
     class DummyArgs:
         name: str
-        model: LMTransformerArgsgs
+        model: HierarchicalTransformer
 
     @dataclass
-    class LMTransformerArgsgs:
+    class HierarchicalArgs:
         dim: int
 
     Then you can pass model.dim=32 to change values in LMTransformerArgsgs

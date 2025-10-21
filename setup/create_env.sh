@@ -33,7 +33,7 @@ conda activate $env_prefix
 echo "Currently in env $(which python)"
 
 # Install packages
-pip install torch==2.5.0 xformers --index-url https://download.pytorch.org/whl/cu124
+pip install torch==2.7.0 xformers
 pip install ninja
 pip install --requirement requirements.txt
 

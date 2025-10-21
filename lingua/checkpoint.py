@@ -295,16 +295,6 @@ class CheckpointManager:
             optimizer=optimizer,
         )
         dcp.load(state_dict, checkpoint_id=path)
-        logger.info("State dict loaded.")
-
-        logger.info("Reloading model and optim")
-
-        set_state_dict(
-            model,
-            optimizer,
-            model_state_dict=state_dict["model"],
-            optim_state_dict=state_dict["optim"],
-        )
         logger.info("Model and optim reloaded")
 
     @classmethod

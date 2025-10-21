@@ -5,7 +5,6 @@ rouge-score
 sacrebleu
 sentencepiece
 tiktoken
-fsspec
 blobfile
 wandb
 viztracer

@@ -27,11 +27,11 @@ from lingua.transformer import (
 
 
 def create_causal_mask(seqlen, attn_impl, sliding_window):
-    if sliding_window is not None and attn_impl == "xformers":
+    if sliding_window is not None and attn_impl == "fmha":
         return fmha.attn_bias.LocalAttentionFromBottomRightMask(
             window_left=sliding_window - 1, window_right=0
         )
-    elif attn_impl == "xformers":
+    elif attn_impl == "fmha":
         return fmha.attn_bias.LowerTriangularMask()
     elif attn_impl == "sdpa":
         return "causal"

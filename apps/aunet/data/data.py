@@ -1,5 +1,3 @@
-# Copyright (c) Meta Platforms, Inc. and affiliates.
-
 import contextlib
 from copy import deepcopy
 from functools import partial
@@ -13,6 +11,7 @@ from pathlib import Path
 from queue import Full
 from typing import Dict, Any, Iterator, Optional, TypedDict
 from lingua.tokenizer import build_tokenizer, TokenizerArgs
+from apps.aunet.data.regex_cutting import RegexPool, RegexArgs, map_codepoint_to_byte
 import numpy as np
 import logging
 
@@ -59,6 +58,7 @@ build_seperate_token_packing_dataloader does the same thing but swaps step 2 and
 Both can be called with a resume_state to resume from any given position deterministically
 """
 
+
 TRAIN_DATA_FILE_PATTERN = "*.chunk.*.jsonl"
 
 class JSONLState(TypedDict):
@@ -70,7 +70,7 @@ class JSONLState(TypedDict):
         position (int): The file position after reading the line (in bytes).
         window (int): The window size used for iteration.
         offset (int): The offset used for iteration.
-        current_iter (Optional[int]): Number of iterations over the jsonl file (for infinite iteration).
+        n_iter (Optional[int]): Number of iterations over the jsonl file (for infinite iteration).
     """
 
     file_path: str
@@ -134,6 +134,7 @@ class PrefetchState(TypedDict):
     rng_state: Dict[str, Any]
     prefetch_size: int
     batch_size: int
+    regex: Optional[RegexArgs]
 
 
 def read_jsonl(
@@ -170,7 +171,7 @@ def read_jsonl(
         offset=offset,
         current_iter=current_iter,
     )
-    with open(file_path, "r", encoding="utf-8") as file:
+    with open(file_path, "r") as file:
         file.seek(position)
         while line := file.readline():
             current_line += 1
@@ -212,6 +213,7 @@ def tokenize(
     add_eos: bool,
     tokenizer_type: str,
     tokenizer_path: Optional[str] = None,
+    regex: Optional[RegexArgs] = None,
 ):
     """
     Tokenizes text from an iterator of content-state pairs using a specified tokenizer.
@@ -226,6 +228,7 @@ def tokenize(
     - (tokens, state) pairs, where `tokens` is a list of tokenized text, and `state` is the original state from the iterator.
     """
     tokenizer = build_tokenizer(name=tokenizer_type, path=tokenizer_path)
+    regex_pool = RegexPool(regex)
     for content, state in iterator:
         assert (
             "text" in content or "content" in content
@@ -233,7 +236,21 @@ def tokenize(
         content_key = "text" if ("text" in content) else "content"
         text = content[content_key]
         tokens = tokenizer.encode(text, add_bos=add_bos, add_eos=add_eos)
-        yield tokens, TokenizerState(
+
+        offsets, pool_level = regex_pool.str_offset(text)
+        pool_level = np.array(pool_level)
+        offsets = np.array(offsets)
+        mapping = map_codepoint_to_byte(text)
+
+        level_mask = np.zeros(mapping[-1]+1+add_bos+add_eos, dtype=int)
+        level_mask[mapping[offsets] + add_bos] = pool_level + 1
+
+        # /!\ Enforce that all level start with a <bos> token, this is useful for upsampling repeating tokens (otherwise there is leakage from the future)
+        level_mask[0] = pool_level.max() + 1
+
+        tokens_n_mask = np.vstack([tokens, level_mask])
+        
+        yield tokens_n_mask, TokenizerState(
             it_state=state,
             add_bos=add_bos,
             add_eos=add_eos,
@@ -340,6 +357,8 @@ def pack_tokens(
 
     The function handles the complexity of determining the correct state for resuming iteration after the buffer is cleared, ensuring seamless continuation of token sequences.
     """
+    def len_of_buffer(buff):
+        return sum(map(lambda x: x.shape[1], buff))
     buffer = []
     states = []
     output_seq_len = empty_buffer_state["output_seq_len"]
@@ -347,17 +366,15 @@ def pack_tokens(
     start_token = empty_buffer_state["start_token"]
     previous_state = empty_buffer_state["it_state"]
     buffer_size = output_seq_len + n_views - 1
-    for i, (tokens, state) in enumerate(iterator):
+    for i, (tokens_n_mask, state) in enumerate(iterator):
         end_token = start_token
         sample_is_read = False
         while not sample_is_read:
-            assert start_token < len(
-                tokens
-            ), f"Start token index {start_token} bigger than sequence {len(tokens)}"
-            free_space = buffer_size - len(buffer)
-            seq_len = min(free_space, len(tokens) - start_token)
+            assert start_token < tokens_n_mask.shape[1], f"Start token index {start_token} bigger than sequence {tokens_n_mask.shape[1]}"
+            free_space = buffer_size - len_of_buffer(buffer)
+            seq_len = min(free_space, tokens_n_mask.shape[1] - start_token)
             end_token = start_token + seq_len
-            buffer.extend(tokens[start_token:end_token])
+            buffer.append(tokens_n_mask[:, start_token:end_token])
             start_token = end_token
 
             states.append(
@@ -369,24 +386,25 @@ def pack_tokens(
                     n_views=n_views,
                 )
             )
-            assert len(buffer) <= buffer_size, "Buffer overflow"
 
-            if len(buffer) == buffer_size:
-                out = np.array(buffer)
-                assert out.ndim == 1, "Iterator should return 1D sequences"
+            assert len_of_buffer(buffer) <= buffer_size, f"Buffer overflow {len_of_buffer(buffer)} > {buffer_size}"
+            
+            if len_of_buffer(buffer) == buffer_size:
+                out = np.hstack(buffer)
+                assert out.ndim == 2, "Iterator should return 1D sequences"
                 out = np.lib.stride_tricks.sliding_window_view(
-                    out, n_views, axis=0
+                    out, n_views, axis=1
                 )  # (output_seq_len, n_views)
 
                 # We rewind by n_views to account for the last tokens not having their targets
                 rewinded_idx = start_token - (n_views - 1)
                 empty_buffer_state = get_empty_buffer_state(rewinded_idx, states)
-                buffer = buffer[output_seq_len:]
-                assert len(buffer) == (n_views - 1)
+                buffer = [out[:, -n_views + 1:, -1]]
+                assert buffer[0].shape[1] == (n_views - 1)
 
                 yield out, empty_buffer_state
 
-            if start_token == len(tokens):
+            if start_token == tokens_n_mask.shape[1]:
                 start_token = 0
                 sample_is_read = True
                 previous_state = state
@@ -420,7 +438,7 @@ def batch_and_shuffle_prefetched_sequences(
     - PrefetchState: The state required to resume prefetched batch. Contains also the internal of iterator.
     """
     prefetch_buffer = -1 * np.ones(
-        (prefetch_size * batch_size, seq_len, n_views), dtype=int
+        (prefetch_size * batch_size, 2, seq_len, n_views), dtype=int
     )
     rng = np.random.default_rng()
     rng.bit_generator.state = state["rng_state"]
@@ -454,7 +472,9 @@ def batch_and_shuffle_prefetched_sequences(
             prefetch_size=prefetch_size,
         )
 
-        yield prefetch_buffer[idx * batch_size : (idx + 1) * batch_size].copy(), state
+
+        sample = prefetch_buffer[idx * batch_size : (idx + 1) * batch_size].copy()
+        yield sample[:, 0], sample[:, 1], state
 
         for i in range(batch_size):
             prefetch_buffer[idx * batch_size + i], pack_state = next(data_loader)
@@ -476,7 +496,7 @@ def find_and_sanitize_chunks(dataset_path: str, world_size: int, file_pattern: s
     else:
         assert (
             world_size % n_chunks == 0
-        ), "World size should be a multiple of number of chunks"
+        ), f"World size {world_size} should be a multiple of number of chunks {n_chunks}"
 
     assert n_chunks > 0, f"No valid chunks in {dataset_path}"
 
@@ -550,6 +570,7 @@ def init_state(
     add_eos: bool,
     tokenizer_name: str,
     tokenizer_path: Optional[str] = None,
+    regex: Optional[RegexArgs] = None,
     file_pattern: str = TRAIN_DATA_FILE_PATTERN
 ):
     multi_choice_state = init_choice_state(
@@ -580,6 +601,7 @@ def init_state(
         rng_state=prefetch_rng_state,
         batch_size=batch_size,
         prefetch_size=prefetch_size,
+        regex=regex,
     )
 
 
@@ -620,6 +642,7 @@ def build_dataloader(
         tokenizer_state["add_eos"],
         tokenizer_state["name"],
         tokenizer_state["path"],
+        state["regex"],
     )
 
     data_it = pack_tokens(
@@ -720,6 +743,7 @@ class DataArgs:
     load_async: bool = True
     prefetch_size: int = 64
     tokenizer: TokenizerArgs = field(default_factory=TokenizerArgs)
+    regex: Optional[RegexArgs] = None
 
 
 def init_dataloader_state_from_args(
@@ -741,6 +765,7 @@ def init_dataloader_state_from_args(
         tokenizer_path=args.tokenizer.path,
         add_bos=args.add_bos,
         add_eos=args.add_eos,
+        regex=args.regex,
     )
 
 

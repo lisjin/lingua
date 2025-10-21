@@ -47,8 +47,10 @@ default_no_recompute_ops = {
     torch.ops.aten._scaled_dot_product_flash_attention.default,
     torch.ops.c10d_functional.reduce_scatter_tensor.default,
     torch.ops.xformers_flash.flash_fwd.default,
-    torch.ops.xformers.efficient_attention_forward_cutlass.default,
 }
+with contextlib.suppress(AttributeError):  # ignore exception if op is missing (old xFormers)
+    default_no_recompute_ops.add(torch.ops.xformers.efficient_attention_forward_cutlass.default)
+    default_no_recompute_ops.add(torch.ops.xformers_flash3.flash_fwd.default)
 
 
 @dataclass
@@ -322,7 +324,13 @@ def check_model_value_range(
             logger.warning(f"Model parameter {name} contains NaN or Inf")
 
         param_range = param.max() - param.min()
-        param_std = param.std()
+        param_std = 0.0
+        if param.dtype in (torch.float, torch.float16, torch.bfloat16):
+            param_std = param.std()
+        else:
+            logger.warning(
+                f"Model parameter {name} is of dtype {param.dtype}"
+            )
 
         if param_range > range:
             logger.warning(

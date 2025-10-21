@@ -503,9 +503,9 @@ class TransformerBlock(nn.Module):
         self.head_dim = args.head_dim or args.dim // args.n_heads
         self.n_heads = args.n_heads or args.dim // args.head_dim
         self.n_kv_heads = args.n_kv_heads or self.n_heads
-
-        assert args.n_heads % self.n_kv_heads == 0
-        assert args.dim % args.n_heads == 0
+        
+        assert self.n_heads % self.n_kv_heads == 0
+        assert args.dim % self.n_heads == 0
 
         self.attention = Attention(
             dim=args.dim,
