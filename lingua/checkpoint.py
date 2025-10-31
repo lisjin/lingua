@@ -17,7 +17,6 @@ from torch.distributed._tensor import DeviceMesh
 from torch.distributed.checkpoint.state_dict import (
     get_model_state_dict,
     get_state_dict,
-    set_state_dict,
 )
 from torch.distributed.checkpoint.format_utils import dcp_to_torch_save
 import torch.optim.optimizer

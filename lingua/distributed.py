@@ -19,7 +19,6 @@ from typing import List, Optional, Tuple, Union
 
 import torch
 from torch.distributed import ReduceOp
-from torch.nn.parallel import DistributedDataParallel as DDP
 from torch import distributed as dist
 from torch.distributed._tensor import DTensor
 from torch.distributed._composable.fsdp import MixedPrecisionPolicy, fully_shard
@@ -33,7 +32,6 @@ from torch.utils.checkpoint import (
 from torch.distributed.device_mesh import DeviceMesh, init_device_mesh
 
 # for no recompute ops
-import xformers.ops
 
 from lingua.float8 import convert_linears_to_fp8
 
@@ -269,7 +267,7 @@ def setup_torch_distributed(dist_args):
     if dist_args.matmul_allow_tf32:
         torch.backends.cuda.matmul.allow_tf32 = True
         logger.warning(
-            f"WARNING: Setting torch.backends.matmul.allow_tf32 to True. This is faster but less accurate."
+            "WARNING: Setting torch.backends.matmul.allow_tf32 to True. This is faster but less accurate."
         )
     torch.backends.cuda.matmul.allow_bf16_reduced_precision_reduction = (
         dist_args.allow_bf16_reduced_precision_reduction
@@ -411,7 +409,7 @@ def parallelize_model(
         ), "Only full shard is supported for TP parallelism"
         assert tp_parallelize is not None, "TP plan is required for TP parallelism"
         assert (
-            distributed_args.compile == False
+            not distributed_args.compile
         ), "Compile is not supported for TP parallelism"
 
         tp_parallelize(model, device_mesh["tp"], model_args, distributed_args)

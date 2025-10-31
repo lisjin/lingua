@@ -1,13 +1,15 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates.
 
-import argparse
 import logging
+import os
+import yaml
 from omegaconf import OmegaConf, DictConfig, ListConfig
 from typing import Type, TypeVar
 
 logger = logging.getLogger()
 
 T = TypeVar("T")
+
 
 def set_struct_recursively(cfg, strict: bool = True):
     # Set struct mode for the current level
@@ -69,3 +71,12 @@ def dump_config(config, path, log_config=True):
             logger.info("Using the following config for this run:")
             logger.info(yaml_dump)
         f.write(yaml_dump)
+
+
+def load_prune_config(prune_config_path):
+    if not os.path.exists(prune_config_path):
+        raise FileNotFoundError(f"Missing {prune_config_path=}")
+
+    with open(prune_config_path, "r") as f:
+        prune_config = yaml.full_load(f)
+    return prune_config

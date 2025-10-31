@@ -8,7 +8,8 @@ import logging
 from torch import nn
 from torch.optim import AdamW, lr_scheduler
 
-from pat.optim import PruneOptimizer
+from lingua.args import load_prune_config
+from pat.optim import build_prune_optimizer
 from pat.utils import get_param_groups
 
 logger = logging.getLogger()
@@ -32,9 +33,14 @@ class OptimArgs:
     decay_fraction: float = 0.1
     exp_factor: float = 0.5
 
-    prune_config: str = ""
+    prune_config_path: str = ""
     prune_warmup_steps: int = 0
     prune_reg_lambda: float = 0.0
+    gamma_index_slope: float = 0.0
+
+
+def lr_constant(step: int) -> float:
+    return 1.0
 
 
 def lr_linear(step: int, warmup: int, n_steps: int, min_ratio: float) -> float:
@@ -117,7 +123,7 @@ def lr_wsd(
 
 def build_lr_fn(args: OptimArgs, n_steps: int):
     if args.scheduler == "constant":
-        lr_fn = lambda x: 1.0
+        lr_fn = lr_constant
     elif args.scheduler == "linear":
         lr_fn = partial(
             lr_linear, warmup=args.warmup, n_steps=n_steps, min_ratio=args.lr_min_ratio
@@ -156,8 +162,17 @@ def build_lr_fn(args: OptimArgs, n_steps: int):
 def build_optimizer(model: nn.Module, args: OptimArgs, n_steps: int):
     logger.info("Starting build of optimizer...")
 
-    if args.prune_config:
-        param_groups = get_param_groups(model, args.prune_config)
+    if args.prune_config_path:
+        num_blocks = len(model.layers)
+        device = next(model.parameters()).device
+        prune_config = load_prune_config(
+            args.prune_config_path,
+            args.prune_reg_lambda,
+            num_blocks,
+            device,
+            args.gamma_index_slope,
+        )
+        param_groups = get_param_groups(model, prune_config)
         logger.info(f"Found {len(param_groups)} param groups from prune_config")
     else:
         param_groups = model.parameters()
@@ -171,11 +186,11 @@ def build_optimizer(model: nn.Module, args: OptimArgs, n_steps: int):
         fused=True,  # Faster optim.step but can throw errors
     )
 
-    if args.prune_config:
-        optimizer = PruneOptimizer(
+    if args.prune_config_path:
+        optimizer = build_prune_optimizer(
             optimizer,
-            reg_lambda=args.prune_reg_lambda,
-            warmup_steps=args.prune_warmup_steps,
+            args.prune_reg_lambda,
+            args.prune_warmup_steps,
         )
 
     # scheduler

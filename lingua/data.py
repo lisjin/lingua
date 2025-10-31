@@ -10,7 +10,6 @@ from queue import Full, Empty
 from multiprocessing.synchronize import Event as EventClass
 import os
 from pathlib import Path
-from queue import Full
 from typing import Dict, Any, Iterator, Optional, TypedDict
 from lingua.tokenizer import build_tokenizer, TokenizerArgs
 import numpy as np
@@ -158,7 +157,7 @@ def read_jsonl(
         JSONLState: Represents the state of each line read according to window and offset.
     """
     if (offset < 0) or (offset >= block_size):
-        raise RuntimeError(f"JSONL iterator offset value is invalid")
+        raise RuntimeError("JSONL iterator offset value is invalid")
     # We assume the start position is either 0 or given by the last line yielded
     # Therefore the current line is right after the offset (modulo block_size)
     current_line = offset + 1 if position > 0 else 0
@@ -471,7 +470,6 @@ def find_and_sanitize_chunks(dataset_path: str, world_size: int, file_pattern: s
     n_chunks = len(dataset_chunks)
 
     if n_chunks > world_size:
-        n_discard = n_chunks - world_size
         dataset_chunks = dataset_chunks[:world_size]
     else:
         assert (

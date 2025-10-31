@@ -67,7 +67,7 @@ class MetricLogger:
             and self.args.logging.wandb is not None
             and get_is_master()
         ):
-            run = wandb.init(
+            _ = wandb.init(
                 config=asdict(self.args),
                 **asdict(self.args.logging.wandb),
             )
@@ -194,7 +194,6 @@ class SparsityMonitor:
         if not hasattr(optimizer, "regularized_param_groups"):
             return
 
-        from pat.utils import instantiate_module
 
         tag_dict = {}
         for i, group in enumerate(optimizer.regularized_param_groups()):
@@ -236,8 +235,8 @@ def upload_train_to_wandb(
         wandb.init(config=cfg, name=cfg["name"], project=project, entity=entity)
 
         with open(Path(ckpt_dir) / "metrics.jsonl") as f:
-            for l in f:
-                m = json.loads(l)
+            for line in f:
+                m = json.loads(line)
                 wandb.log(m, step=m["global_step"])
 
         wandb.finish()
@@ -246,8 +245,8 @@ def upload_train_to_wandb(
         wandb.init(config=cfg, name=cfg["name"], project=project, entity=entity)
 
         with open(Path(ckpt_dir) / "metrics.eval.jsonl") as f:
-            for l in f:
-                m = json.loads(l)
+            for line in f:
+                m = json.loads(line)
                 wandb.log(
                     {
                         f"evals/{name.replace('/','.')}": value

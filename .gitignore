@@ -2,5 +2,3 @@
 .vscode
 *.ipynb
 slurm-*.out
-wandb
-scripts

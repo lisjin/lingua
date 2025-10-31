@@ -8,6 +8,7 @@
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=32
 #SBATCH --mem=64GB
+#SBATCH --account=fair_amaia_cw_explore
 #SBATCH --qos=lowest
 #SBATCH --time=01:00:00
 #SBATCH --output=slurm-%j.out
@@ -19,23 +20,16 @@ set -e
 # Start timer
 start_time=$(date +%s)
 
-# Get the current date
-current_date=$(date +%y%m%d)
-
-# Create environment name with the current date
-env_prefix=lingua_$current_date
-
-# Create the conda environment
-source $HOME/miniconda3/etc/profile.d/conda.sh
-conda create -n $env_prefix python=3.11 -y
-conda activate $env_prefix
+env_prefix=${CKPT_HOME}/envs/lingua-parq
+uv venv $env_prefix --python 3.13
+source ${env_prefix}/bin/activate
 
 echo "Currently in env $(which python)"
 
 # Install packages
-pip install torch==2.7.0 xformers
-pip install ninja
-pip install --requirement requirements.txt
+uv pip install xformers --index-url https://download.pytorch.org/whl/cu126
+uv pip install ninja
+uv pip install -r requirements.txt
 
 # End timer
 end_time=$(date +%s)

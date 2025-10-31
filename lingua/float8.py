@@ -165,7 +165,7 @@ def convert_linears_to_fp8(root_module: torch.nn.Module, recipe: str, filter: st
     def replace(module: torch.nn.Module, name: str) -> torch.nn.Module:
         if not isinstance(module, torch.nn.Linear) or not filter_re.search(name):
             return module
-        if type(module) == torch.nn.Linear:
+        if isinstance(module, torch.nn.Linear):
             if recipe == "rowwise":
                 new_module = Fp8Linear(
                     in_features=module.in_features,
