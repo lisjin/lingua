@@ -7,10 +7,10 @@
 #SBATCH --gres=gpu:1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=32
-#SBATCH --mem=64GB
+#SBATCH --mem=128GB
 #SBATCH --account=fair_amaia_cw_explore
 #SBATCH --qos=lowest
-#SBATCH --time=01:00:00
+#SBATCH --time=3:00:00
 #SBATCH --output=slurm-%j.out
 #SBATCH --error=slurm-%j.err
 
@@ -21,15 +21,22 @@ set -e
 start_time=$(date +%s)
 
 env_prefix=${CKPT_HOME}/envs/lingua-parq
-uv venv $env_prefix --python 3.13
-source ${env_prefix}/bin/activate
+if [ ! -d "$env_prefix" ]; then
+    source $HOME/miniconda3/etc/profile.d/conda.sh
+    conda create -p $env_prefix python=3.11 -y
+fi
+conda activate $env_prefix
 
-echo "Currently in env $(which python)"
+pip install --upgrade pip setuptools
+pip install ninja
+pip install 'torch==2.5.0' 'xformers==0.0.28.post2' --index-url https://download.pytorch.org/whl/cu124
+pip install -r requirements.txt
+pip uninstall pynvml -y
 
-# Install packages
-uv pip install xformers --index-url https://download.pytorch.org/whl/cu126
-uv pip install ninja
-uv pip install -r requirements.txt
+if [ ! -d $HOME/qpat ]; then
+    cd $HOME && git clone git@github.com:fairinternal/qpat.git
+fi
+cd $HOME/qpat && pip install -e --no-deps '.[dev]'
 
 # End timer
 end_time=$(date +%s)

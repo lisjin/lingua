@@ -110,9 +110,9 @@ class CheckpointManager:
         self.init_ckpt_path = args.init_ckpt_path
         self.continue_training_from_init = args.continue_training_from_init
 
-        assert os.path.exists(
-            self.path
-        ), f"Path {self.path} does not exist and needs to be created before using CheckpointManager (use instantiate_and_make_dir)"
+        assert os.path.exists(self.path), (
+            f"Path {self.path} does not exist and needs to be created before using CheckpointManager (use instantiate_and_make_dir)"
+        )
 
         self.existing_saves = self.get_existing_saves()
 
@@ -220,7 +220,6 @@ class CheckpointManager:
         config,
         device_mesh: Optional[DeviceMesh] = None,
     ) -> bool:
-
         # When creating directory check if only rank0 or is there other solution
         path = Path(self.path)
         curr_save_dir = self._create_folder(path, FOLDER_NAME.format(train_state.step))

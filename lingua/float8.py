@@ -35,7 +35,9 @@ def apply_to_partial(fn, t, *args, **kwargs):
     # manual (post-)scaling which we want to apply to each partial term
     # separately, thus we do this hack to "unpack" the DTensors.
     if isinstance(t, DTensor) and t.placements == (Partial(),):
-        return torch.distributed.tensor.experimental.local_map(fn, [*t.placements])(t, *args, **kwargs)
+        return torch.distributed.tensor.experimental.local_map(fn, [*t.placements])(
+            t, *args, **kwargs
+        )
     else:
         return fn(t, *args, **kwargs)
 
@@ -116,7 +118,9 @@ class Fp8LinearFn(torch.autograd.Function):
             amax_b = amax_b.repeat_interleave(
                 b.shape[0] // amax_b.shape[0], dim=0, output_size=b.shape[0]
             )
-            grad_a = matmul(grad_out, amax_grad_out, b, amax_b, None, use_fast_accum=False)
+            grad_a = matmul(
+                grad_out, amax_grad_out, b, amax_b, None, use_fast_accum=False
+            )
         else:
             grad_a = None
         if ctx.b_requires_grad:
@@ -138,7 +142,11 @@ class Fp8Linear(torch.nn.Linear):
         return out
 
 
-def named_replace(fn: Callable[[torch.nn.Module, str], torch.nn.Module], module: torch.nn.Module, name="") -> torch.nn.Module:
+def named_replace(
+    fn: Callable[[torch.nn.Module, str], torch.nn.Module],
+    module: torch.nn.Module,
+    name="",
+) -> torch.nn.Module:
     for child_name, child_module in list(module.named_children()):
         full_name = f"{name}.{child_name}" if name else child_name
         new_child_module = named_replace(fn, child_module, full_name)
@@ -147,7 +155,9 @@ def named_replace(fn: Callable[[torch.nn.Module, str], torch.nn.Module], module:
     return module
 
 
-def convert_linears_to_fp8(root_module: torch.nn.Module, recipe: str, filter: str) -> torch.nn.Module:
+def convert_linears_to_fp8(
+    root_module: torch.nn.Module, recipe: str, filter: str
+) -> torch.nn.Module:
     if recipe not in ["rowwise"]:
         raise RuntimeError(f"Unknown float8 recipe {recipe!r}")
 
@@ -162,6 +172,7 @@ def convert_linears_to_fp8(root_module: torch.nn.Module, recipe: str, filter: st
     torch._inductor.config.triton.multi_kernel = 1
 
     filter_re = re.compile(filter)
+
     def replace(module: torch.nn.Module, name: str) -> torch.nn.Module:
         if not isinstance(module, torch.nn.Linear) or not filter_re.search(name):
             return module
@@ -181,11 +192,13 @@ def convert_linears_to_fp8(root_module: torch.nn.Module, recipe: str, filter: st
         else:
             assert False, str(type(module))
         return new_module
+
     out = named_replace(replace, root_module)
 
     # Force re-compile everything
     torch._dynamo.reset_code_caches()
     from torch._inductor.cudagraph_trees import reset_cudagraph_trees
+
     reset_cudagraph_trees()
 
     return out

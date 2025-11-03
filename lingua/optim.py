@@ -188,9 +188,7 @@ def build_optimizer(model: nn.Module, args: OptimArgs, n_steps: int):
 
     if args.prune_config_path:
         optimizer = build_prune_optimizer(
-            optimizer,
-            args.prune_reg_lambda,
-            args.prune_warmup_steps,
+            optimizer, args.prune_reg_lambda, args.prune_warmup_steps
         )
 
     # scheduler

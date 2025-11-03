@@ -194,7 +194,6 @@ class SparsityMonitor:
         if not hasattr(optimizer, "regularized_param_groups"):
             return
 
-
         tag_dict = {}
         for i, group in enumerate(optimizer.regularized_param_groups()):
             is_svd = group["group_type"] == "SVDGrouper"
@@ -249,7 +248,7 @@ def upload_train_to_wandb(
                 m = json.loads(line)
                 wandb.log(
                     {
-                        f"evals/{name.replace('/','.')}": value
+                        f"evals/{name.replace('/', '.')}": value
                         for name, value in m.items()
                         if "/" in name
                     },

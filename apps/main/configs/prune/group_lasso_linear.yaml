@@ -1,3 +1,0 @@
-!!python/tuple [torch.nn.Linear, weight]:
-  group_type: Dim0Grouper
-  prox_type: ProxGroupLasso

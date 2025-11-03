@@ -2,3 +2,4 @@
 .vscode
 *.ipynb
 slurm-*.out
+wandb

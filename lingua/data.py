@@ -19,7 +19,7 @@ logger = logging.getLogger()
 
 """
 This file contains all code necessary for text data loading from preshuffled jsonl chunks.
-For example if given the following files with a world size of 8 
+For example if given the following files with a world size of 8
 
 /path/to/arxiv:
 arxiv.chunk.00.jsonl (Contains many lines of {"text":...} or {"content":...})
@@ -53,12 +53,13 @@ Each iterator returns a tuple (output, state) where state contains all the info 
 
 build_mixed_token_packing_dataloader creates the states and return an iterator that does everything above
 
-build_seperate_token_packing_dataloader does the same thing but swaps step 2 and 3 
+build_seperate_token_packing_dataloader does the same thing but swaps step 2 and 3
 
 Both can be called with a resume_state to resume from any given position deterministically
 """
 
 TRAIN_DATA_FILE_PATTERN = "*.chunk.*.jsonl"
+
 
 class JSONLState(TypedDict):
     """Represents the current state of a JSON line reader.
@@ -226,18 +227,21 @@ def tokenize(
     """
     tokenizer = build_tokenizer(name=tokenizer_type, path=tokenizer_path)
     for content, state in iterator:
-        assert (
-            "text" in content or "content" in content
-        ), "JSON line must contain either text or content key"
+        assert "text" in content or "content" in content, (
+            "JSON line must contain either text or content key"
+        )
         content_key = "text" if ("text" in content) else "content"
         text = content[content_key]
         tokens = tokenizer.encode(text, add_bos=add_bos, add_eos=add_eos)
-        yield tokens, TokenizerState(
-            it_state=state,
-            add_bos=add_bos,
-            add_eos=add_eos,
-            name=tokenizer_type,
-            path=tokenizer_path,
+        yield (
+            tokens,
+            TokenizerState(
+                it_state=state,
+                add_bos=add_bos,
+                add_eos=add_eos,
+                name=tokenizer_type,
+                path=tokenizer_path,
+            ),
         )
 
 
@@ -350,9 +354,9 @@ def pack_tokens(
         end_token = start_token
         sample_is_read = False
         while not sample_is_read:
-            assert start_token < len(
-                tokens
-            ), f"Start token index {start_token} bigger than sequence {len(tokens)}"
+            assert start_token < len(tokens), (
+                f"Start token index {start_token} bigger than sequence {len(tokens)}"
+            )
             free_space = buffer_size - len(buffer)
             seq_len = min(free_space, len(tokens) - start_token)
             end_token = start_token + seq_len
@@ -426,9 +430,9 @@ def batch_and_shuffle_prefetched_sequences(
 
     # Rewind the iterator to the correct position by skipping seq_idx sequences to roll the buffer accordingly
     seq_idx = state["seq_idx"]
-    assert (
-        seq_idx >= 0 and seq_idx < prefetch_size
-    ), "Prefetch state seq_idx should be in 0 <= seq_idx < prefetch_size."
+    assert seq_idx >= 0 and seq_idx < prefetch_size, (
+        "Prefetch state seq_idx should be in 0 <= seq_idx < prefetch_size."
+    )
 
     _rng_state = state["rng_state"]
     _it_state = state["it_state"]
@@ -465,23 +469,27 @@ def batch_and_shuffle_prefetched_sequences(
         idx = (idx + 1) % prefetch_size
 
 
-def find_and_sanitize_chunks(dataset_path: str, world_size: int, file_pattern: str = TRAIN_DATA_FILE_PATTERN):
+def find_and_sanitize_chunks(
+    dataset_path: str, world_size: int, file_pattern: str = TRAIN_DATA_FILE_PATTERN
+):
     dataset_chunks = [str(p) for p in Path(dataset_path).glob(file_pattern)]
     n_chunks = len(dataset_chunks)
 
     if n_chunks > world_size:
         dataset_chunks = dataset_chunks[:world_size]
     else:
-        assert (
-            world_size % n_chunks == 0
-        ), "World size should be a multiple of number of chunks"
+        assert world_size % n_chunks == 0, (
+            "World size should be a multiple of number of chunks"
+        )
 
     assert n_chunks > 0, f"No valid chunks in {dataset_path}"
 
     return dataset_chunks
 
 
-def distribute_data_to_rank(dataset_path: str, rank: int, world_size: int, file_pattern: str):
+def distribute_data_to_rank(
+    dataset_path: str, rank: int, world_size: int, file_pattern: str
+):
     """
     Distributes the chunk files in a dataset path to each worker.
     If world_size is smaller than the number of chunks, the extra chunks are discarded.
@@ -548,10 +556,15 @@ def init_state(
     add_eos: bool,
     tokenizer_name: str,
     tokenizer_path: Optional[str] = None,
-    file_pattern: str = TRAIN_DATA_FILE_PATTERN
+    file_pattern: str = TRAIN_DATA_FILE_PATTERN,
 ):
     multi_choice_state = init_choice_state(
-        root_dir=root_dir, sources=sources, seed=seed, rank=rank, world_size=world_size, file_pattern=file_pattern
+        root_dir=root_dir,
+        sources=sources,
+        seed=seed,
+        rank=rank,
+        world_size=world_size,
+        file_pattern=file_pattern,
     )
     tokenizer_state = TokenizerState(
         it_state=multi_choice_state,
