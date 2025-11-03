@@ -87,6 +87,8 @@ class EvalArgs:
     )
     harness: Optional[LMHarnessArgs] = field(default_factory=LMHarnessArgs)
     validation: Optional[ValidationArgs] = field(default_factory=ValidationArgs)
+    qos: str = "lowest"
+    partition: str = ""
     pat: Optional[PATArgs] = field(default_factory=PATArgs)
 
     wandb: Optional[Any] = None
@@ -105,9 +107,9 @@ def all_dicts_same(dict_list):
 
 class MockAccelerator:
     def gather(self, tensor):
-        l = [torch.zeros_like(tensor) for _ in range(get_world_size())]
-        torch.distributed.all_gather(l, tensor)
-        return torch.stack(l)
+        lst = [torch.zeros_like(tensor) for _ in range(get_world_size())]
+        torch.distributed.all_gather(lst, tensor)
+        return torch.stack(lst)
 
     def wait_for_everyone(self):
         torch.distributed.barrier()

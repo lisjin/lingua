@@ -9,6 +9,7 @@ from pathlib import Path
 import json
 from datetime import datetime, timezone
 
+import re
 import torch
 import torch.nn as nn
 
@@ -46,11 +47,17 @@ class WandbArgs:
 
 
 @dataclass
+class SparsityLoggingArgs:
+    module_name_regex: Optional[str] = None
+
+
+@dataclass
 class LoggingArgs:
     freq: int = 10  # Log every freq optimizer steps
     acc_freq: Optional[int] = None  # Log every acc_freq gradient accumulation steps
 
     wandb: Optional[WandbArgs] = None
+    sparsity: Optional[SparsityLoggingArgs] = None
 
 
 class MetricLogger:
@@ -184,27 +191,28 @@ class GPUMemoryMonitor:
 
 
 class SparsityMonitor:
-    def __init__(self, model: nn.Module, group_plot_limit: int = 10):
-        self.data_ptr_to_name = {
-            p.data_ptr(): name for name, p in model.named_parameters()
-        }
-        self.group_plot_limit = group_plot_limit
+    def __init__(self, model: nn.Module, args: Optional[Any] = None):
+        self.tensor_to_name = {p: name for name, p in model.named_parameters()}
+        self.module_name_regex = getattr(
+            args.logging.sparsity, "module_name_regex", None
+        )
+        self.total_numel = sum(p.numel() for p in model.parameters())
 
     def get_stats(self, optimizer):
         if not hasattr(optimizer, "regularized_param_groups"):
             return
 
         tag_dict = {}
+        reg_numel = 0
+        reg_nz_numel = 0
         for i, group in enumerate(optimizer.regularized_param_groups()):
             is_svd = group["group_type"] == "SVDGrouper"
             for j, p in enumerate(group["params"]):
-                if j == self.group_plot_limit:
-                    break
-
-                name = self.data_ptr_to_name[p.data_ptr()]
+                name = self.tensor_to_name[p]
                 if is_svd:
                     sv_count = optimizer.state[p]["sv_count"]
                     sparsity_frac = 1.0 - (sv_count / min(p.shape))
+                    nz_count = sv_count * (p.shape[0] + p.shape[1])
                 else:
                     nz_count = (
                         (p != 0).to(torch.uint8).sum()
@@ -212,10 +220,27 @@ class SparsityMonitor:
                         else p.count_nonzero()
                     )
                     sparsity_frac = 1.0 - (nz_count / p.numel())
+                reg_nz_numel += nz_count.item()
+                reg_numel += p.numel()
 
                 sparsity_frac = sparsity_frac.item()
                 if sparsity_frac > 0:
-                    tag_dict.setdefault(f"reg_group_{i}", {})[name] = sparsity_frac
+                    tag_key1, tag_key2 = name.rsplit(".")[0], "0"
+                    if self.module_name_regex is not None:
+                        match = re.search(self.module_name_regex, name)
+                        if match is not None and len(match.groups()) == 2:
+                            tag_key1 = match.group(2)
+                            idx = match.group(1)
+                            idx = int(idx) if idx.isdigit() else 0
+                            tag_key2 = f"block_{idx:02}"
+                    tag_dict.setdefault(tag_key1, {})[tag_key2] = sparsity_frac
+
+        if reg_numel and reg_nz_numel:
+            tag_dict["overall"] = {
+                "relative": reg_nz_numel / reg_numel,
+                "absolute": reg_nz_numel / self.total_numel,
+            }
+
         return tag_dict
 
 

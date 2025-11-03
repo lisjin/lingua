@@ -20,7 +20,12 @@ from torch.optim import lr_scheduler
 from torch.distributed.checkpoint.stateful import Stateful
 from torch.distributed._tensor import DTensor
 
-from lingua.args import dataclass_from_dict, dump_config, flatten_dict
+from lingua.args import (
+    dataclass_from_dict,
+    dump_config,
+    flatten_dict,
+    load_preset_config,
+)
 from lingua.checkpoint import CheckpointArgs, CheckpointManager, load_from_checkpoint
 from lingua.data import (
     DataArgs,
@@ -308,7 +313,7 @@ def train(args: TrainArgs):
         )
 
         sparsity_monitor = (
-            SparsityMonitor(model)
+            SparsityMonitor(model, args)
             if hasattr(optimizer, "regularized_param_groups")
             else None
         )
@@ -590,7 +595,6 @@ def train(args: TrainArgs):
                                 script="apps.main.eval",
                                 copy_code=False,
                                 nodes=args.async_eval_gpus // 8,
-                                qos="lowest",
                             )
                         )
 
@@ -661,8 +665,19 @@ def main():
     # We remove 'config' attribute from config as the underlying DataClass does not have it
     del cli_args.config
 
+    preset_cfg = None
+    preset_cfgs = []
+    load_preset_config(cli_args, preset_cfgs)
+    load_preset_config(file_cfg, preset_cfgs)
+    if preset_cfgs:
+        preset_cfg = OmegaConf.merge(*preset_cfgs)
+
     default_cfg = OmegaConf.structured(TrainArgs())
-    cfg = OmegaConf.merge(default_cfg, file_cfg, cli_args)
+    ordered_cfgs = [default_cfg]
+    if preset_cfg is not None:
+        ordered_cfgs.append(preset_cfg)
+    ordered_cfgs.extend([file_cfg, cli_args])
+    cfg = OmegaConf.merge(*ordered_cfgs)
     cfg = OmegaConf.to_object(cfg)
 
     train(cfg)

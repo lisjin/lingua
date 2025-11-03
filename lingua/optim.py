@@ -193,9 +193,7 @@ def build_optimizer(model: nn.Module, args: OptimArgs, n_steps: int):
 
     # scheduler
     lr_fn = build_lr_fn(args, n_steps)
-    scheduler = lr_scheduler.LambdaLR(
-        optimizer, lr_fn
-    )  # lr_scheduler.LambdaLR(optimizer, lr_fn)
+    scheduler = lr_scheduler.LambdaLR(optimizer, lr_fn)
 
     logger.info("Done with build of optimizer.")
     return optimizer, scheduler

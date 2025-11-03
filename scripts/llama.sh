@@ -10,11 +10,11 @@
 #SBATCH --cpus-per-gpu=16
 #SBATCH --mem=1600G
 #SBATCH --account=parq
-#SBATCH --qos=h200_parq_high
-#SBATCH --array=2-5
+#SBATCH --qos=h200_dev
+#SBATCH --array=0
 #SBATCH --output=/checkpoint/parq/%u/lingua_dumps/llama3.2-1b_%A/%a/train.out
 #SBATCH --error=/checkpoint/parq/%u/lingua_dumps/llama3.2-1b_%A/%a/train.err
-#SBATCH --time=2-00:00:00
+#SBATCH --time=1-00:00:00
 #SBATCH --open-mode=append
 #SBATCH --signal=B:USR1@120
 #SBATCH --distribution=block
@@ -34,7 +34,7 @@ mkdir -p $save_dir
 source $HOME/miniconda3/etc/profile.d/conda.sh
 conda activate $CKPT_HOME/envs/lingua-parq
 
-reg_lmbdas=(2e-4 5e-4 1e-3 2e-3 5e-3 1e-2)
+reg_lmbdas=(1e-2)
 nproc_per_node=8
 tot_batch_size=128
 batch_size=$((tot_batch_size / (nproc_per_node * SLURM_JOB_NUM_NODES)))
@@ -51,19 +51,15 @@ HF_DATASETS_OFFLINE=1 srun torchrun \
     grad_acc_steps=$((256 / $tot_batch_size)) \
     steps=23842 \
     dump_dir=$save_dir \
-    config=apps/main/configs/base_llama.yaml \
+    config=apps/main/configs/llama3/llama3-1b.yaml \
     data.root_dir=/datasets/llm/pretraining \
     data.batch_size=$batch_size \
     data.tokenizer.path=/datasets/pretrained-llms/Llama-3.2-1B/original/tokenizer.model \
+    checkpoint.eval.qos=h100_alignment_shared \
+    checkpoint.eval.partition='' \
     logging.wandb.project=lingua \
     logging.wandb.id=$model_name \
     logging.wandb.dir=$CKPT_HOME \
-    model.dim=2048 \
-    model.multiple_of=256 \
-    model.n_layers=16 \
-    model.n_heads=32 \
-    model.ffn_dim_multiplier=1.5 \
-    optim.lr=8e-4 \
     optim.warmup=1000 \
     optim.prune_reg_lambda=${reg_lmbdas[$SLURM_ARRAY_TASK_ID]} \
     optim.prune_config_path=apps/main/configs/prune/lasso_linear.yaml \

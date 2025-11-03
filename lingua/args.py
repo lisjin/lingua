@@ -76,6 +76,13 @@ def dump_config(config, path, log_config=True):
         f.write(yaml_dump)
 
 
+def load_preset_config(args, preset_cfgs):
+    if "__preset_config" in args:
+        preset_cfg = OmegaConf.load(args.__preset_config)
+        preset_cfgs.append(preset_cfg)
+        del args.__preset_config
+
+
 def load_prune_config(
     config_path: str,
     prune_reg_lambda: float,
