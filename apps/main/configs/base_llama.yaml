@@ -1,0 +1,72 @@
+seed: 42
+
+optim:
+  warmup: 2000
+  lr_min_ratio: 1e-6
+  clip: 1.0
+
+distributed:
+  fsdp_type: full_shard
+  float8_recipe: rowwise
+  compile: true
+  model_dtype: bf16
+  matmul_allow_tf32: false
+  selective_activation_checkpointing: false
+  tp_size: 1
+
+model:
+  n_kv_heads: 8
+  rope_theta: 500000.0
+  init_std_factor: current_depth
+
+data:
+  root_dir: /datasets
+  sources:
+    dclm: 100.0
+  prefetch_size: 1024
+  seq_len: 8092
+  n_views: 2
+  load_async: true
+  add_bos: true
+  add_eos: true
+  tokenizer:
+    name: tiktoken
+    path: /datasets/Llama-3.2-1B/tokenizer.model
+
+profiling:
+  run: false
+
+checkpoint:
+  dump:
+    every: 5000
+    keep: 3
+  eval:
+    every: 10000
+    keep: -1
+
+logging:
+  freq: 1
+
+async_eval_gpus: 8
+eval:
+  harness:
+    tasks:
+      - arc_easy
+      - arc_challenge
+      - gsm8k
+      - hellaswag
+      - task: boolq
+        dataset_kwargs:
+          trust_remote_code: true
+      - piqa
+      - task: social_iqa
+        dataset_kwargs:
+          trust_remote_code: true
+      - winogrande
+      - openbookqa
+      - race
+  validation:
+    max_steps: 1000
+  generator:
+    max_tokens: 16384
+    dtype: bf16
