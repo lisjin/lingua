@@ -595,6 +595,8 @@ def train(args: TrainArgs):
                                 script="apps.main.eval",
                                 copy_code=False,
                                 nodes=args.async_eval_gpus // 8,
+                                qos=eval_args.validation.qos,
+                                partition=eval_args.validation.partition,
                             )
                         )
 

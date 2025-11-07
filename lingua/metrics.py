@@ -196,11 +196,16 @@ class SparsityMonitor:
         self.module_name_regex = getattr(
             args.logging.sparsity, "module_name_regex", None
         )
-        self.total_numel = sum(p.numel() for p in model.parameters())
+        self.total_numel = None
 
     def get_stats(self, optimizer):
         if not hasattr(optimizer, "regularized_param_groups"):
             return
+
+        if self.total_numel is None:
+            self.total_numel = sum(
+                p.numel() for group in optimizer.param_groups for p in group["params"]
+            )
 
         tag_dict = {}
         reg_numel = 0
@@ -214,11 +219,10 @@ class SparsityMonitor:
                     sparsity_frac = 1.0 - (sv_count / min(p.shape))
                     nz_count = sv_count * (p.shape[0] + p.shape[1])
                 else:
-                    nz_count = (
-                        (p != 0).to(torch.uint8).sum()
-                        if is_dtensor(p)
-                        else p.count_nonzero()
-                    )
+                    if is_dtensor(p):
+                        nz_count = (p != 0).to(torch.uint8).sum()
+                    else:
+                        nz_count = p.count_nonzero()
                     sparsity_frac = 1.0 - (nz_count / p.numel())
                 reg_nz_numel += nz_count.item()
                 reg_numel += p.numel()
@@ -237,8 +241,8 @@ class SparsityMonitor:
 
         if reg_numel and reg_nz_numel:
             tag_dict["overall"] = {
-                "relative": reg_nz_numel / reg_numel,
-                "absolute": reg_nz_numel / self.total_numel,
+                "relative": 1.0 - (reg_nz_numel / reg_numel),
+                "absolute": 1.0 - (reg_nz_numel / self.total_numel),
             }
 
         return tag_dict

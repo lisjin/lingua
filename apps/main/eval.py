@@ -69,6 +69,8 @@ class ValidationArgs:
     use_val_from_train_src: bool = True  # Use the validation set from training sources
     root_dir: str = ""
     sources: List[str] = field(default_factory=list)  # Other sources to eval on
+    qos: str = "lowest"
+    partition: str = "learn"
 
 
 @dataclass
@@ -87,8 +89,6 @@ class EvalArgs:
     )
     harness: Optional[LMHarnessArgs] = field(default_factory=LMHarnessArgs)
     validation: Optional[ValidationArgs] = field(default_factory=ValidationArgs)
-    qos: str = "lowest"
-    partition: str = ""
     pat: Optional[PATArgs] = field(default_factory=PATArgs)
 
     wandb: Optional[Any] = None
