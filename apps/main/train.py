@@ -597,6 +597,7 @@ def train(args: TrainArgs):
                                 nodes=args.async_eval_gpus // 8,
                                 qos=eval_args.validation.qos,
                                 partition=eval_args.validation.partition,
+                                ncpu=eval_args.validation.ncpu,
                             )
                         )
 
@@ -620,6 +621,15 @@ def train(args: TrainArgs):
             args,
             device_mesh=world_mesh,
         )
+
+    if sparsity_monitor is not None:
+        save_path = checkpoint.get_last_step_path(dp_rank)
+        load_from_checkpoint(
+            save_path, model, optimizer=optimizer, full_cpu_offload=True
+        )
+        if get_is_master() and save_path is not None:
+            sparsity_monitor.log_final_sparsity(optimizer, save_path)
+
     gc.collect()
 
 

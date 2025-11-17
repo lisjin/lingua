@@ -1,7 +1,4 @@
-__preset_config: apps/main/configs/llama3/base_llama.yaml
-
-optim:
-  lr: 4e-4
+__preset_config: apps/main/configs/llama/base_llama.yaml
 
 model:
   dim: 2048

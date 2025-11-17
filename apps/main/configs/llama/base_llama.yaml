@@ -1,6 +1,8 @@
 seed: 42
 
 optim:
+  lr: 4e-4
+  weight_decay: 0.1
   warmup: 2000
   lr_min_ratio: 1e-6
   clip: 1.0
@@ -22,7 +24,7 @@ model:
 data:
   root_dir: /datasets
   sources:
-    dclm: 100.0
+    dclm_baseline_1.0_10prct_shuffled: 100.0
   prefetch_size: 1024
   seq_len: 8092
   n_views: 2

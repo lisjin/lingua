@@ -76,6 +76,7 @@ class MetricLogger:
         ):
             _ = wandb.init(
                 config=asdict(self.args),
+                settings=wandb.Settings(init_timeout=120),
                 **asdict(self.args.logging.wandb),
             )
 
@@ -247,6 +248,18 @@ class SparsityMonitor:
 
         return tag_dict
 
+    def log_final_sparsity(self, optimizer, save_path: Path):
+        nz_numel = 0
+        for group in optimizer.param_groups:
+            for p in group["params"]:
+                if is_dtensor(p):
+                    nz_numel += (p != 0).to(torch.uint8).sum().item()
+                else:
+                    nz_numel += p.count_nonzero().item()
+        sparsity = 1.0 - (nz_numel / self.total_numel)
+        with open(save_path / "sparsity.json", "w") as f:
+            json.dump({"sparsity": sparsity}, f)
+
 
 def upload_train_to_wandb(
     ckpt_dir, project="lingua", entity="codegen-team", train=True, eval=True
@@ -260,7 +273,13 @@ def upload_train_to_wandb(
     cfg = OmegaConf.to_container(cfg)
 
     if train:
-        wandb.init(config=cfg, name=cfg["name"], project=project, entity=entity)
+        wandb.init(
+            config=cfg,
+            name=cfg["name"],
+            project=project,
+            entity=entity,
+            settings=wandb.Settings(init_timeout=120),
+        )
 
         with open(Path(ckpt_dir) / "metrics.jsonl") as f:
             for line in f:

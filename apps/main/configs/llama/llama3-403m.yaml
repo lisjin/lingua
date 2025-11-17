@@ -1,0 +1,12 @@
+__preset_config: apps/main/configs/llama/base_llama.yaml
+
+distributed:
+  float8_recipe: null
+
+model:
+  dim: 1024
+  multiple_of: 256
+  n_layers: 23
+  n_heads: 16
+  ffn_dim_multiplier: null
+  weight_tying: true

@@ -15,6 +15,7 @@ import torch.nn as nn
 from omegaconf import OmegaConf
 from torch.distributed._tensor import DeviceMesh
 from torch.distributed.checkpoint.state_dict import (
+    StateDictOptions,
     get_model_state_dict,
     get_state_dict,
 )
@@ -85,6 +86,7 @@ def load_from_checkpoint(
     optimizer: Optional[torch.optim.Optimizer] = None,
     model_key: str = "model",
     optim_key: str = "optim",
+    full_cpu_offload: bool = False,
 ):
     if not (Path(ckpt_dir) / ".metadata").exists():
         raise ValueError(
@@ -92,10 +94,19 @@ def load_from_checkpoint(
         )
 
     state_dict = {}
+    options = (
+        StateDictOptions(
+            full_state_dict=True, cpu_offload=True, broadcast_from_rank0=True
+        )
+        if full_cpu_offload
+        else None
+    )
     if optimizer is not None:
-        state_dict[model_key], state_dict[optim_key] = get_state_dict(model, optimizer)
+        state_dict[model_key], state_dict[optim_key] = get_state_dict(
+            model, optimizer, options=options
+        )
     else:
-        state_dict[model_key] = get_model_state_dict(model)
+        state_dict[model_key] = get_model_state_dict(model, options=options)
         if model_key == "":  # If only loading a model directly, the key should be empty
             state_dict = state_dict.pop(model_key)
 

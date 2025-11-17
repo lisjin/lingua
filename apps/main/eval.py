@@ -71,6 +71,7 @@ class ValidationArgs:
     sources: List[str] = field(default_factory=list)  # Other sources to eval on
     qos: str = "lowest"
     partition: str = "learn"
+    ncpu: int = 16
 
 
 @dataclass

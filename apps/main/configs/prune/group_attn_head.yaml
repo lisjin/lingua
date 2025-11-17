@@ -1,0 +1,10 @@
+:.*attention\.wv\.weight$:
+  group_type: AttentionHeadGrouper
+  prox_type: ProxGroupLasso
+  num_heads: 7
+  head_pack_dim: 0
+:.*attention\.wo\.weight$:
+  group_type: AttentionHeadGrouper
+  prox_type: ProxGroupLasso
+  num_heads: 14
+  head_pack_dim: 1
