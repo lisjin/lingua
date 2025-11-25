@@ -44,10 +44,10 @@ profiling:
 
 checkpoint:
   dump:
-    every: 100
+    every: 250
     keep: 1
   eval:
-    every: 100
+    every: 250
     keep: 1
 
 logging:
@@ -73,4 +73,4 @@ eval:
           trust_remote_code: true
       - winogrande
   validation:
-    max_steps: 100
+    max_steps: 250

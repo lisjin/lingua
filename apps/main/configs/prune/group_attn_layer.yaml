@@ -1,8 +1,6 @@
 :.*attention\.wv\.weight$:
-  group_type: AttentionHeadGrouperDim0
+  group_type: LayerGrouper
   prox_type: ProxGroupLasso
-  num_heads: 7
 :.*attention\.wo\.weight$:
-  group_type: AttentionHeadGrouperDim1
+  group_type: LayerGrouper
   prox_type: ProxGroupLasso
-  num_heads: 14

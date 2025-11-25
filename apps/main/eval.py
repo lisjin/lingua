@@ -267,6 +267,15 @@ def launch_eval(cfg: EvalArgs):
     )
     logger.info("Model loaded")
 
+    total_nz_params = 0
+    total_params = 0
+    for p in model.parameters():
+        total_nz_params += torch.count_nonzero(p).item()
+        total_params += p.numel()
+    sparsity_frac = 1.0 - (total_nz_params / float(total_params))
+    with open(Path(cfg.dump_dir) / "sparsity.json", "w") as f:
+        json.dump({"sparsity": sparsity_frac}, f)
+
     model.eval()
     generator = PackedCausalTransformerGenerator(cfg.generator, model, tokenizer)
 

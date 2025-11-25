@@ -17,7 +17,6 @@ dependencies:
   - pip=25.0=py311h06a4308_0
   - python=3.11.11=he870216_0
   - readline=8.2=h5eee18b_0
-  - setuptools=80.9.0=py311h06a4308_0
   - sqlite=3.45.3=h5eee18b_0
   - tk=8.6.14=h39e8969_0
   - wheel=0.45.1=py311h06a4308_0
@@ -69,19 +68,21 @@ dependencies:
       - nltk==3.9.2
       - numexpr==2.14.1
       - numpy==2.3.3
-      - nvidia-cublas-cu12==12.4.5.8
-      - nvidia-cuda-cupti-cu12==12.4.127
-      - nvidia-cuda-nvrtc-cu12==12.4.127
-      - nvidia-cuda-runtime-cu12==12.4.127
-      - nvidia-cudnn-cu12==9.1.0.70
-      - nvidia-cufft-cu12==11.2.1.3
-      - nvidia-curand-cu12==10.3.5.147
-      - nvidia-cusolver-cu12==11.6.1.9
-      - nvidia-cusparse-cu12==12.3.1.170
+      - nvidia-cublas-cu12==12.6.4.1
+      - nvidia-cuda-cupti-cu12==12.6.80
+      - nvidia-cuda-nvrtc-cu12==12.6.77
+      - nvidia-cuda-runtime-cu12==12.6.77
+      - nvidia-cudnn-cu12==9.5.1.17
+      - nvidia-cufft-cu12==11.3.0.4
+      - nvidia-cufile-cu12==1.11.1.6
+      - nvidia-curand-cu12==10.3.7.77
+      - nvidia-cusolver-cu12==11.7.1.2
+      - nvidia-cusparse-cu12==12.5.4.2
+      - nvidia-cusparselt-cu12==0.6.3
       - nvidia-ml-py==13.580.82
-      - nvidia-nccl-cu12==2.21.5
-      - nvidia-nvjitlink-cu12==12.4.127
-      - nvidia-nvtx-cu12==12.4.127
+      - nvidia-nccl-cu12==2.26.2
+      - nvidia-nvjitlink-cu12==12.6.85
+      - nvidia-nvtx-cu12==12.6.77
       - objprint==0.3.0
       - omegaconf==2.3.0
       - orjson==3.11.4
@@ -113,21 +114,22 @@ dependencies:
       - scipy==1.16.3
       - sentencepiece==0.2.1
       - sentry-sdk==2.44.0
+      - setuptools==70.2.0
       - six==1.17.0
       - smmap==5.0.2
       - sqlitedict==2.1.0
-      - sympy==1.13.1
+      - sympy==1.14.0
       - tabledata==1.3.4
       - tabulate==0.9.0
       - tcolorpy==0.1.7
       - threadpoolctl==3.6.0
       - tiktoken==0.12.0
       - tokenizers==0.22.1
-      - torch==2.5.0+cu124
+      - torch==2.7.0+cu126
       - tqdm==4.67.1
       - tqdm-multiprocess==0.0.11
       - transformers==4.57.1
-      - triton==3.1.0
+      - triton==3.3.0
       - typepy==1.3.4
       - typing-extensions==4.15.0
       - typing-inspection==0.4.2
@@ -136,7 +138,7 @@ dependencies:
       - viztracer==1.1.1
       - wandb==0.23.0
       - word2number==1.1
-      - xformers==0.0.28.post2
+      - xformers==0.0.30
       - xxhash==3.6.0
       - yarl==1.22.0
       - zstandard==0.25.0

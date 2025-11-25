@@ -7,6 +7,7 @@ import logging
 import multiprocessing as mp
 import os
 import random
+import re
 import shutil
 import signal
 import socket
@@ -25,6 +26,8 @@ from torch.distributed._composable.fsdp import MixedPrecisionPolicy, fully_shard
 from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
     checkpoint_wrapper,
 )
+from torch.distributed.tensor import distribute_tensor
+from torch.distributed.tensor.placement_types import Replicate, Shard
 from torch.utils.checkpoint import (
     create_selective_checkpoint_contexts,
     CheckpointPolicy,
@@ -65,6 +68,8 @@ class DistributedArgs:
     selective_activation_checkpointing: bool = False
     compile: bool = False
     fsdp_type: str = "no_shard"
+    fsdp_dim1_shard_params_regex: Optional[str] = None
+    fsdp_ignored_params_regex: Optional[str] = None
     model_dtype: str = "bf16"
     float8_recipe: Optional[str] = None
     float8_filter: str = r"layers\.[0-9]+\."
@@ -431,6 +436,29 @@ def parallelize_model(
                 "dp_shard must be 1 for no_shard fsdp_type"
             )
 
+        custom_shard_placement_fn = None
+        if distributed_args.fsdp_dim1_shard_params_regex:
+            shard_on_dim1_params = {
+                n: p
+                for n, p in model.named_parameters()
+                if re.search(distributed_args.fsdp_dim1_shard_params_regex, n)
+            }
+            logging.info(f"Shard on dim 1 params: {shard_on_dim1_params.keys()}")
+            shard_on_dim1_params = set(shard_on_dim1_params.values())
+
+            def custom_shard_placement_fn(param: torch.nn.Parameter) -> Optional[Shard]:
+                if param in shard_on_dim1_params:
+                    return Shard(1)
+
+        ignored_params = None
+        if distributed_args.fsdp_ignored_params_regex:
+            ignored_params = {
+                p
+                for n, p in model.named_parameters()
+                if re.search(distributed_args.fsdp_ignored_params_regex, n)
+            }
+            logging.info(f"Found {len(ignored_params)} ignored params")
+
         fsdp_config = dict(
             mp_policy=(
                 MixedPrecisionPolicy(
@@ -444,6 +472,7 @@ def parallelize_model(
                 or distributed_args.fsdp_type == "no_shard"
                 else device_mesh["dp_replicate"]
             ),
+            shard_placement_fn=custom_shard_placement_fn,
         )
 
         if fsdp_grouping_plan is None:
@@ -459,6 +488,20 @@ def parallelize_model(
                     module, **fsdp_config, reshard_after_forward=reshard_after_forward
                 ),
             )
+
+        if ignored_params:
+            for n, p in model.named_parameters():
+                if p in ignored_params:
+                    module_name, param_base = n.rsplit(".", 1)
+                    print(f"{module_name=} {param_base=}")
+                    module = get_module(model, module_name)
+                    p = torch.nn.Parameter(
+                        distribute_tensor(
+                            p.data, device_mesh=device_mesh, placements=(Replicate(),)
+                        ),
+                        requires_grad=p.requires_grad,
+                    )
+                    setattr(module, param_base, p)
 
         model = fully_shard(model, **fsdp_config, reshard_after_forward=True)
     else:

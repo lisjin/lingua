@@ -6,7 +6,7 @@ import gc
 import logging
 import os
 import sys
-from contextlib import ExitStack
+from contextlib import ExitStack, nullcontext
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from timeit import default_timer as timer
@@ -19,6 +19,7 @@ import xformers.profiler
 from torch.optim import lr_scheduler
 from torch.distributed.checkpoint.stateful import Stateful
 from torch.distributed._tensor import DTensor
+from torch.distributed.tensor.experimental import implicit_replication
 
 from lingua.args import (
     dataclass_from_dict,
@@ -445,15 +446,39 @@ def train(args: TrainArgs):
             # optimizer step
             grad_norm = -1.0
             if train_state.acc_step == 0:
-                grad_norm = torch.nn.utils.clip_grad_norm_(
-                    model.parameters(), max_norm=args.optim.clip, foreach=True
+                ctx_mgr = (
+                    implicit_replication
+                    if args.distributed.fsdp_type != "no_shard"
+                    else nullcontext
                 )
+                with ctx_mgr():
+                    if args.distributed.fsdp_type == "no_shard":
+                        grad_norm = torch.nn.utils.clip_grad_norm_(
+                            model.parameters(),
+                            max_norm=args.optim.clip,
+                            foreach=True,
+                        )
+                    else:
+                        total_norm = torch.nn.utils.get_total_norm(
+                            [p.grad for p in model.parameters()],
+                            foreach=True,
+                        )
+                        if isinstance(total_norm, DTensor):
+                            total_norm = total_norm.to_local()
+                        torch.nn.utils.clip_grads_with_norm_(
+                            model.parameters(),
+                            max_norm=args.optim.clip,
+                            total_norm=total_norm,
+                            foreach=True,
+                        )
 
                 grad_norm = (
                     grad_norm.full_tensor()
                     if isinstance(grad_norm, DTensor)
                     else grad_norm
-                ).item()
+                )
+                if not isinstance(grad_norm, float):
+                    grad_norm = grad_norm.item()
 
                 optimizer.step()
                 scheduler.step()
@@ -621,14 +646,6 @@ def train(args: TrainArgs):
             args,
             device_mesh=world_mesh,
         )
-
-    if sparsity_monitor is not None:
-        save_path = checkpoint.get_last_step_path(dp_rank)
-        load_from_checkpoint(
-            save_path, model, optimizer=optimizer, full_cpu_offload=True
-        )
-        if get_is_master() and save_path is not None:
-            sparsity_monitor.log_final_sparsity(optimizer, save_path)
 
     gc.collect()
 

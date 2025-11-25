@@ -192,28 +192,41 @@ class GPUMemoryMonitor:
 
 
 class SparsityMonitor:
+    @staticmethod
+    def _update_seen_tensors(p, seen_tensors) -> bool:
+        if p in seen_tensors:  # ignore duplicates for tied weights
+            return True
+        seen_tensors.add(p)
+        return False
+
     def __init__(self, model: nn.Module, args: Optional[Any] = None):
-        self.tensor_to_name = {p: name for name, p in model.named_parameters()}
+        self.tensor_to_name = dict()
+        self.total_numel = 0
+        seen_tensors = set()
+        for n, p in model.named_parameters():
+            if self._update_seen_tensors(p, seen_tensors):
+                continue
+            self.tensor_to_name[p] = n
+            self.total_numel += p.numel()
+
         self.module_name_regex = getattr(
             args.logging.sparsity, "module_name_regex", None
         )
-        self.total_numel = None
 
     def get_stats(self, optimizer):
         if not hasattr(optimizer, "regularized_param_groups"):
             return
 
-        if self.total_numel is None:
-            self.total_numel = sum(
-                p.numel() for group in optimizer.param_groups for p in group["params"]
-            )
-
+        seen_tensors = set()
         tag_dict = {}
         reg_numel = 0
         reg_nz_numel = 0
         for i, group in enumerate(optimizer.regularized_param_groups()):
             is_svd = group["group_type"] == "SVDGrouper"
             for j, p in enumerate(group["params"]):
+                if self._update_seen_tensors(p, seen_tensors):
+                    continue
+
                 name = self.tensor_to_name[p]
                 if is_svd:
                     sv_count = optimizer.state[p]["sv_count"]
@@ -221,7 +234,7 @@ class SparsityMonitor:
                     nz_count = sv_count * (p.shape[0] + p.shape[1])
                 else:
                     if is_dtensor(p):
-                        nz_count = (p != 0).to(torch.uint8).sum()
+                        nz_count = p.full_tensor().count_nonzero()
                     else:
                         nz_count = p.count_nonzero()
                     sparsity_frac = 1.0 - (nz_count / p.numel())
@@ -247,18 +260,6 @@ class SparsityMonitor:
             }
 
         return tag_dict
-
-    def log_final_sparsity(self, optimizer, save_path: Path):
-        nz_numel = 0
-        for group in optimizer.param_groups:
-            for p in group["params"]:
-                if is_dtensor(p):
-                    nz_numel += (p != 0).to(torch.uint8).sum().item()
-                else:
-                    nz_numel += p.count_nonzero().item()
-        sparsity = 1.0 - (nz_numel / self.total_numel)
-        with open(save_path / "sparsity.json", "w") as f:
-            json.dump({"sparsity": sparsity}, f)
 
 
 def upload_train_to_wandb(
