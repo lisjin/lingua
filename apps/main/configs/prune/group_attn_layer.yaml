@@ -1,6 +1,6 @@
 :.*attention\.wv\.weight$:
   group_type: LayerGrouper
-  prox_type: ProxGroupLasso
+  prox_type: ProxGroupLassoReduce
 :.*attention\.wo\.weight$:
   group_type: LayerGrouper
-  prox_type: ProxGroupLasso
+  prox_type: ProxGroupLassoReduce

@@ -29,6 +29,7 @@ from lingua.distributed import (
     get_world_size,
     setup_torch_distributed,
 )
+from lingua.metrics import SparsityMonitor
 
 EVAL_FOLDER_NAME = "{:010d}"
 
@@ -71,6 +72,7 @@ class ValidationArgs:
     sources: List[str] = field(default_factory=list)  # Other sources to eval on
     qos: str = "lowest"
     partition: str = "learn"
+    time: int = 240
     ncpu: int = 16
 
 
@@ -267,14 +269,22 @@ def launch_eval(cfg: EvalArgs):
     )
     logger.info("Model loaded")
 
-    total_nz_params = 0
-    total_params = 0
-    for p in model.parameters():
-        total_nz_params += torch.count_nonzero(p).item()
-        total_params += p.numel()
-    sparsity_frac = 1.0 - (total_nz_params / float(total_params))
+    if train_cfg.optim.prune_reg_lambda is not None:
+        from lingua.optim import build_optimizer
+
+        optimizer, _ = build_optimizer(model, train_cfg.optim, train_cfg.steps)
+        sparsity_stats = SparsityMonitor(model, train_cfg).get_stats(optimizer)[
+            "overall"
+        ]
+
     with open(Path(cfg.dump_dir) / "sparsity.json", "w") as f:
-        json.dump({"sparsity": sparsity_frac}, f)
+        json.dump(
+            {
+                "sparsity": sparsity_stats["absolute"],
+                "rel_sparsity": sparsity_stats["relative"],
+            },
+            f,
+        )
 
     model.eval()
     generator = PackedCausalTransformerGenerator(cfg.generator, model, tokenizer)

@@ -1,0 +1,6 @@
+:.*(attention|feed_forward)\.w[0-9a-z]\.weight$:
+  group_type: ElemGrouper
+  prox_type: ProxLasso
+:.*tok_embeddings\.weight$:
+  group_type: SVDGrouper
+  prox_type: ProxNuclearNorm

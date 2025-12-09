@@ -201,13 +201,11 @@ class SparsityMonitor:
 
     def __init__(self, model: nn.Module, args: Optional[Any] = None):
         self.tensor_to_name = dict()
-        self.total_numel = 0
         seen_tensors = set()
         for n, p in model.named_parameters():
             if self._update_seen_tensors(p, seen_tensors):
                 continue
             self.tensor_to_name[p] = n
-            self.total_numel += p.numel()
 
         self.module_name_regex = getattr(
             args.logging.sparsity, "module_name_regex", None
@@ -229,7 +227,7 @@ class SparsityMonitor:
 
                 name = self.tensor_to_name[p]
                 if is_svd:
-                    sv_count = optimizer.state[p]["sv_count"]
+                    sv_count = optimizer.state[p].get("sv_count", min(p.shape))
                     sparsity_frac = 1.0 - (sv_count / min(p.shape))
                     nz_count = sv_count * (p.shape[0] + p.shape[1])
                 else:
@@ -238,10 +236,11 @@ class SparsityMonitor:
                     else:
                         nz_count = p.count_nonzero()
                     sparsity_frac = 1.0 - (nz_count / p.numel())
-                reg_nz_numel += nz_count.item()
+                reg_nz_numel += nz_count.item() if torch.is_tensor(nz_count) else nz_count
                 reg_numel += p.numel()
 
-                sparsity_frac = sparsity_frac.item()
+                if torch.is_tensor(sparsity_frac):
+                    sparsity_frac = sparsity_frac.item()
                 if sparsity_frac > 0:
                     tag_key1, tag_key2 = name.rsplit(".")[0], "0"
                     if self.module_name_regex is not None:
@@ -253,10 +252,18 @@ class SparsityMonitor:
                             tag_key2 = f"block_{idx:02}"
                     tag_dict.setdefault(tag_key1, {})[tag_key2] = sparsity_frac
 
+        total_numel = 0
+        for group in optimizer.param_groups:
+            for p in group["params"]:
+                if self._update_seen_tensors(p, seen_tensors):
+                    continue
+                total_numel += p.numel()
+        total_numel += reg_numel
+
         if reg_numel and reg_nz_numel:
             tag_dict["overall"] = {
                 "relative": 1.0 - (reg_nz_numel / reg_numel),
-                "absolute": 1.0 - (reg_nz_numel / self.total_numel),
+                "absolute": 1.0 - (reg_nz_numel / total_numel),
             }
 
         return tag_dict

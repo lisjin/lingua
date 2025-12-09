@@ -621,6 +621,7 @@ def train(args: TrainArgs):
                                 copy_code=False,
                                 nodes=args.async_eval_gpus // 8,
                                 qos=eval_args.validation.qos,
+                                time=eval_args.validation.time,
                                 partition=eval_args.validation.partition,
                                 ncpu=eval_args.validation.ncpu,
                             )
