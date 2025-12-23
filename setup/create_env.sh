@@ -29,14 +29,14 @@ conda activate $env_prefix
 
 pip install --upgrade pip setuptools
 pip install ninja
-pip install 'torch==2.7.0' 'xformers==0.0.30' --index-url https://download.pytorch.org/whl/cu124
+pip install 'torch==2.7.0' 'xformers==0.0.30' --index-url https://download.pytorch.org/whl/cu128
 pip install -r requirements.txt
 pip uninstall pynvml -y
 
 if [ ! -d $HOME/qpat ]; then
     cd $HOME && git clone git@github.com:fairinternal/qpat.git
 fi
-cd $HOME/qpat && pip install -e --no-deps '.[dev]'
+cd $HOME/qpat && pip install --no-dependencies -e '.[dev]'
 
 # End timer
 end_time=$(date +%s)

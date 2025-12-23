@@ -66,7 +66,7 @@ source activate {conda_env_path}
 export OMP_NUM_THREADS=1
 export LAUNCH_WITH="SBATCH"
 export DUMP_DIR={dump_dir}
-srun {log_output} -n {tasks} -N {nodes_per_run} python -u -m {script} config=$DUMP_DIR/base_config.yaml
+srun {log_output} -n {tasks} -N {nodes_per_run} python -u -m {script} config=$DUMP_DIR/base_config.yaml {ckpt_dir_flag}
 """
 
 
@@ -180,6 +180,10 @@ def launch_job(args: StoolArgs):
         if not args.stdout
         else ""
     )
+    ckpt_dir_flag = ""
+    ckpt_dir = dump_dir.replace("evals", "checkpoints")
+    if os.path.exists(ckpt_dir):
+        ckpt_dir_flag = f"{ckpt_dir=}"
     sbatch = SBATCH_COMMAND.format(
         name=job_name,
         script=args.script,
@@ -200,6 +204,7 @@ def launch_job(args: StoolArgs):
         conda_env_path=conda_env_path,
         log_output=log_output,
         go_to_code_dir=f"cd {dump_dir}/code/" if args.copy_code else "",
+        ckpt_dir_flag=ckpt_dir_flag,
     )
 
     print("Writing sbatch command ...")

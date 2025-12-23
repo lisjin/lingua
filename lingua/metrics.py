@@ -192,18 +192,10 @@ class GPUMemoryMonitor:
 
 
 class SparsityMonitor:
-    @staticmethod
-    def _update_seen_tensors(p, seen_tensors) -> bool:
-        if p in seen_tensors:  # ignore duplicates for tied weights
-            return True
-        seen_tensors.add(p)
-        return False
-
     def __init__(self, model: nn.Module, args: Optional[Any] = None):
         self.tensor_to_name = dict()
-        seen_tensors = set()
         for n, p in model.named_parameters():
-            if self._update_seen_tensors(p, seen_tensors):
+            if p in self.tensor_to_name:
                 continue
             self.tensor_to_name[p] = n
 
@@ -211,36 +203,49 @@ class SparsityMonitor:
             args.logging.sparsity, "module_name_regex", None
         )
 
+    @staticmethod
+    def _get_nz_count(tensor):
+        if is_dtensor(tensor):
+            return tensor.full_tensor().count_nonzero().item()
+        return tensor.count_nonzero().item()
+
     def get_stats(self, optimizer):
         if not hasattr(optimizer, "regularized_param_groups"):
             return
 
+        reg_tensors = {
+            p for group in optimizer.regularized_param_groups() for p in group["params"]
+        }
         seen_tensors = set()
         tag_dict = {}
-        reg_numel = 0
-        reg_nz_numel = 0
-        for i, group in enumerate(optimizer.regularized_param_groups()):
-            is_svd = group["group_type"] == "SVDGrouper"
-            for j, p in enumerate(group["params"]):
-                if self._update_seen_tensors(p, seen_tensors):
+        reg_numel, reg_nz_numel = 0, 0
+        total_numel, total_nz_numel = 0, 0
+        for group in optimizer.param_groups:
+            is_svd = group.get("group_type", None) == "SVDGrouper"
+            for p in group["params"]:
+                if p in seen_tensors:
                     continue
+                seen_tensors.add(p)
 
+                total_numel += p.numel()
                 name = self.tensor_to_name[p]
                 if is_svd:
                     sv_count = optimizer.state[p].get("sv_count", min(p.shape))
+                    if torch.is_tensor(sv_count):
+                        sv_count = sv_count.item()
                     sparsity_frac = 1.0 - (sv_count / min(p.shape))
                     nz_count = sv_count * (p.shape[0] + p.shape[1])
-                else:
-                    if is_dtensor(p):
-                        nz_count = p.full_tensor().count_nonzero()
-                    else:
-                        nz_count = p.count_nonzero()
+                elif p in reg_tensors:
+                    nz_count = self._get_nz_count(p)
                     sparsity_frac = 1.0 - (nz_count / p.numel())
-                reg_nz_numel += nz_count.item() if torch.is_tensor(nz_count) else nz_count
-                reg_numel += p.numel()
+                else:
+                    total_nz_numel += self._get_nz_count(p)
+                    continue
 
-                if torch.is_tensor(sparsity_frac):
-                    sparsity_frac = sparsity_frac.item()
+                reg_nz_numel += nz_count
+                reg_numel += p.numel()
+                total_nz_numel += nz_count
+
                 if sparsity_frac > 0:
                     tag_key1, tag_key2 = name.rsplit(".")[0], "0"
                     if self.module_name_regex is not None:
@@ -252,20 +257,11 @@ class SparsityMonitor:
                             tag_key2 = f"block_{idx:02}"
                     tag_dict.setdefault(tag_key1, {})[tag_key2] = sparsity_frac
 
-        total_numel = 0
-        for group in optimizer.param_groups:
-            for p in group["params"]:
-                if self._update_seen_tensors(p, seen_tensors):
-                    continue
-                total_numel += p.numel()
-        total_numel += reg_numel
-
-        if reg_numel and reg_nz_numel:
+        if reg_nz_numel < reg_numel:
             tag_dict["overall"] = {
-                "relative": 1.0 - (reg_nz_numel / reg_numel),
-                "absolute": 1.0 - (reg_nz_numel / total_numel),
+                "relative": 1.0 - reg_nz_numel / reg_numel,
+                "absolute": 1.0 - total_nz_numel / total_numel,
             }
-
         return tag_dict
 
 

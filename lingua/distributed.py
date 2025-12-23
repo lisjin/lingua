@@ -1,8 +1,13 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates.
 
+from dataclasses import asdict, dataclass
+from datetime import timedelta
+from functools import lru_cache, partial, reduce
+from itertools import chain
+from typing import List, Optional, Tuple, Union
+
 import atexit
 import contextlib
-from itertools import chain
 import logging
 import multiprocessing as mp
 import os
@@ -14,9 +19,6 @@ import socket
 import subprocess
 import sys
 import tempfile
-from dataclasses import asdict, dataclass
-from functools import lru_cache, partial, reduce
-from typing import List, Optional, Tuple, Union
 
 import torch
 from torch.distributed import ReduceOp
@@ -77,6 +79,7 @@ class DistributedArgs:
     matmul_allow_tf32: bool = False
     allow_bf16_reduced_precision_reduction = True
     detect_anomaly: bool = False
+    timeout: Optional[int] = None
 
     compile_cache_size_limit: int = 8
 
@@ -281,7 +284,10 @@ def setup_torch_distributed(dist_args):
     )
     if torch.cuda.device_count() > 1:
         torch.cuda.set_device(local_rank)
-    torch.distributed.init_process_group(init_method="env://", backend="nccl")
+    timeout = timedelta(seconds=dist_args.timeout) if dist_args.timeout else None
+    torch.distributed.init_process_group(
+        init_method="env://", backend="nccl", timeout=timeout
+    )
     torch.autograd.set_detect_anomaly(dist_args.detect_anomaly)
 
 

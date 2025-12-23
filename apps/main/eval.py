@@ -3,9 +3,12 @@
 from collections import defaultdict
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
+
 import json
 import logging
 import os
+import re
+
 from pathlib import Path
 from lm_eval.api.instance import Instance
 from lm_eval.api.model import LM
@@ -20,7 +23,11 @@ from apps.main.generate import (
 )
 from apps.main.transformer import LMTransformer, LMTransformerArgs
 from lingua.args import dump_config
-from lingua.checkpoint import CONSOLIDATE_FOLDER, consolidate_checkpoints
+from lingua.checkpoint import (
+    CONSOLIDATE_FOLDER,
+    CONSOLIDATE_NAME,
+    consolidate_checkpoints,
+)
 from lingua.data import init_choice_state, setup_sources
 from lingua.distributed import (
     DistributedArgs,
@@ -30,6 +37,7 @@ from lingua.distributed import (
     setup_torch_distributed,
 )
 from lingua.metrics import SparsityMonitor
+from lingua.optim import build_optimizer
 
 EVAL_FOLDER_NAME = "{:010d}"
 
@@ -269,22 +277,27 @@ def launch_eval(cfg: EvalArgs):
     )
     logger.info("Model loaded")
 
+    rel_sparsity = 0.0
+    sparsity = 0.0
     if train_cfg.optim.prune_reg_lambda is not None:
-        from lingua.optim import build_optimizer
+        sparsity_monitor = SparsityMonitor(model, train_cfg)
+        train_steps = re.search(r"\d+$", os.path.basename(cfg.dump_dir))
+        train_steps = int(train_steps.group(0)) if train_steps else 0
+        optimizer, _ = build_optimizer(model, train_cfg.optim, train_steps)
+        optim_state_dict = torch.load(
+            Path(consolidate_path) / CONSOLIDATE_NAME, weights_only=True
+        )["optim"]
+        optimizer.load_state_dict(optim_state_dict)
+        del optim_state_dict
 
-        optimizer, _ = build_optimizer(model, train_cfg.optim, train_cfg.steps)
-        sparsity_stats = SparsityMonitor(model, train_cfg).get_stats(optimizer)[
-            "overall"
-        ]
+        sparsity_stats = sparsity_monitor.get_stats(optimizer)
+        if sparsity_stats.get("overall") is not None:
+            sparsity = sparsity_stats["overall"]["absolute"]
+            rel_sparsity = sparsity_stats["overall"]["relative"]
+        logger.info(f"{sparsity=:.4f}, {rel_sparsity:.4f}")
 
     with open(Path(cfg.dump_dir) / "sparsity.json", "w") as f:
-        json.dump(
-            {
-                "sparsity": sparsity_stats["absolute"],
-                "rel_sparsity": sparsity_stats["relative"],
-            },
-            f,
-        )
+        json.dump({"sparsity": sparsity, "rel_sparsity": rel_sparsity}, f)
 
     model.eval()
     generator = PackedCausalTransformerGenerator(cfg.generator, model, tokenizer)
